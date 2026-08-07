@@ -5,16 +5,22 @@ import { reais } from '../lib/formato';
 import { useSinaisAoVivo } from '../lib/useSinaisAoVivo';
 
 /**
- * A ordem segue o fluxo de trabalho, não a arquitetura: o que está aberto agora, o
- * gráfico para conferir, o histórico para revisar, e só depois as ferramentas de estudo.
+ * A ordem segue o fluxo de trabalho: onde olhar agora, a sala de cada ativo, o gráfico
+ * para conferir, o histórico para revisar, e por último a auditoria do motor.
+ *
+ * Cada mini tem sala própria porque são mercados diferentes — um ponto de WDO vale
+ * cinquenta vezes um de WIN, e misturar os dois numa tela só é o caminho mais curto para
+ * operar o tamanho errado.
  */
 const NAVEGACAO = [
-  { para: '/', rotulo: 'Painel', fim: true },
+  { para: '/', rotulo: 'Mesa', fim: true },
+  { para: '/alertas', rotulo: 'Alertas' },
+  { para: '/sala/win', rotulo: 'Sala WIN' },
+  { para: '/sala/wdo', rotulo: 'Sala WDO' },
   { para: '/grafico', rotulo: 'Gráfico' },
-  { para: '/sinais', rotulo: 'Sinais' },
-  { para: '/estudos', rotulo: 'Estudos' },
-  { para: '/padroes', rotulo: 'Padrões' },
-  { para: '/backtest', rotulo: 'Backtest' },
+  { para: '/diario', rotulo: 'Diário' },
+  { para: '/historico', rotulo: 'Histórico' },
+  { para: '/conhecimento', rotulo: 'Conhecimento' },
 ];
 
 export function Layout() {

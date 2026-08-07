@@ -148,6 +148,45 @@ def ler_candles(ativo: str, timeframe: Timeframe, limite: int = 5000) -> Serie:
     return Serie(ativo, timeframe, candles)
 
 
+def ler_sinais_periodo(ativo: str, inicio: datetime, fim: datetime) -> list[dict[str, Any]]:
+    """Sinais do ativo no intervalo, para o relatório de fechamento.
+
+    Traz `viesMtf` junto porque a janela do pregão em que o sinal nasceu está gravada ali
+    — é o que permite o relatório dizer "a abertura americana rendeu X" sem reprocessar
+    a série inteira.
+    """
+    with conexao() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, ativo, timeframe, ts, direcao::text, "padraoId", "padraoNome",
+                   entrada, stop, alvo, "riscoPontos", "retornoPontos", rr, contratos,
+                   score, confiabilidade, status::text, "precoSaida", "resultadoPontos",
+                   "zonaQuente", "viesMtf", fatores
+            FROM sinais
+            WHERE ativo = %s AND ts >= %s AND ts <= %s
+            ORDER BY ts DESC
+            """,
+            (ativo, inicio, fim),
+        )
+        colunas = [d[0] for d in cur.description]
+        linhas = [dict(zip(colunas, linha, strict=False)) for linha in cur.fetchall()]
+
+    # A janela do pregão não é coluna própria — vem do fator `horario` que a confluência
+    # gravou no JSON. Extrair aqui evita recalcular contexto para cada sinal do período.
+    for linha in linhas:
+        linha["janelaPregao"] = _janela_do_sinal(linha.get("fatores"))
+    return linhas
+
+
+def _janela_do_sinal(fatores: Any) -> str:
+    if not isinstance(fatores, list):
+        return ""
+    for f in fatores:
+        if isinstance(f, dict) and f.get("nome") == "horario":
+            return str(f.get("detalhe") or "")
+    return ""
+
+
 def resumo_candles() -> list[dict[str, Any]]:
     with conexao() as conn, conn.cursor() as cur:
         cur.execute(

@@ -92,6 +92,78 @@ export interface Deteccao {
   scoreBruto: number;
 }
 
+export type PeriodoDiario = 'dia' | 'semana' | 'mes';
+
+export interface LinhaDesempenhoPeriodo {
+  chave: string;
+  n: number;
+  acertos: number;
+  taxa: number;
+  expectanciaR: number;
+  resultadoR: number;
+}
+
+/** Fechamento de período + a preparação do próximo pregão. */
+export interface Fechamento {
+  ativo: Ativo;
+  periodo: PeriodoDiario;
+  inicio: string;
+  fim: string;
+  proximoPregao: string;
+  movimento: {
+    abertura: number;
+    maxima: number;
+    minima: number;
+    fechamento: number;
+    variacaoPct: number;
+    amplitude: number;
+    amplitudeAtr: number;
+    candles: number;
+    pregoes: number;
+  } | null;
+  placar: {
+    emitidos: number;
+    acionados: number;
+    alvo: number;
+    stop: number;
+    expirados: number;
+    abertos: number;
+    encerrados: number;
+    taxaAcerto: number;
+    taxaAcionamento: number;
+    expectanciaR: number;
+    resultadoR: number;
+    resultadoReais: number;
+    amostraSuficiente: boolean;
+  };
+  porPadrao: LinhaDesempenhoPeriodo[];
+  porJanela: LinhaDesempenhoPeriodo[];
+  destaques: string[];
+  niveisAmanha: Array<{ preco: number; rotulo: string; origem: string; nota: string }>;
+  contextoAtual: {
+    tendencia?: string;
+    forcaTendencia?: number;
+    atr?: number;
+    regimeMedias?: string;
+    ultimoCandle?: string;
+  };
+}
+
+/** Um evento que merece interromper o que o operador está fazendo. */
+export type TipoAlerta =
+  | 'sinal.novo'
+  | 'entrada.acionada'
+  | 'saida.alvo'
+  | 'saida.stop'
+  | 'sinal.expirado';
+
+export interface Alerta {
+  id: string;
+  tipo: TipoAlerta;
+  em: string;
+  sinal: Sinal;
+}
+
 /**
  * Uma conta que o motor fez, com procedência.
  *
@@ -144,7 +216,14 @@ export interface NivelAtivo {
 
 export interface Raciocinio {
   ativo: Ativo;
+  /** Timestamp do último candle — **não** é a hora atual. */
   momento: string;
+  /**
+   * Minutos desde o último candle. É o número que diz se a tela está de fato ao vivo:
+   * sem ele, uma leitura de ontem às 15h30 tem a mesma cara de uma leitura de agora.
+   */
+  idadeMinutos: number;
+  dadosFrescos: boolean;
   preco: number;
   variacaoDia: number;
   vies: string;

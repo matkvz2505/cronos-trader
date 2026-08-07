@@ -12,6 +12,7 @@ backend já expõe autenticado. Se um dia sair da máquina, precisa de auth ante
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from typing import Literal
 
 from . import __version__, padroes, persistencia
@@ -134,6 +135,38 @@ def catalogo() -> dict:
             }
             for s in especificacoes
         ],
+    }
+
+
+class PedidoDiario(BaseModel):
+    ativo: Literal["WIN", "WDO"]
+    periodo: Literal["dia", "semana", "mes"] = "dia"
+
+
+@app.post("/diario")
+def rota_diario(pedido: PedidoDiario) -> dict:
+    """Fechamento do período e os níveis que o próximo pregão começa olhando.
+
+    Sai tudo do banco — candles e sinais que de fato aconteceram. Onde não há dado, o
+    relatório diz que não há em vez de preencher com frase de efeito.
+    """
+    from . import diario as dia_mod
+
+    if not persistencia.disponivel():
+        raise HTTPException(503, "DATABASE_URL não configurada no serviço de IA")
+
+    serie = persistencia.ler_candles(pedido.ativo, Timeframe.M5, limite=20_000)
+    if not len(serie):
+        raise HTTPException(422, f"sem candles de {pedido.ativo} no banco")
+
+    agora = datetime.now()
+    inicio, fim = dia_mod._janela(pedido.periodo, agora)
+    sinais = persistencia.ler_sinais_periodo(pedido.ativo, inicio, fim)
+
+    fechamento = dia_mod.montar(serie, sinais, pedido.periodo, agora)
+    return {
+        **dia_mod.para_dict(fechamento),
+        "proximoPregao": dia_mod.proximo_pregao().isoformat(),
     }
 
 

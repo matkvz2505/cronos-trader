@@ -88,6 +88,25 @@ mercadoRoutes.get(
   }),
 );
 
+/** Fechamento de dia, semana ou mês — e a preparação do próximo pregão. */
+mercadoRoutes.get(
+  '/diario',
+  autenticar,
+  validarQuery(
+    z.object({
+      ativo: ativoSchema,
+      periodo: z.enum(['dia', 'semana', 'mes']).default('dia'),
+    }),
+  ),
+  assincrono(async (req, res) => {
+    const { ativo, periodo } = req.query as unknown as {
+      ativo: string;
+      periodo: 'dia' | 'semana' | 'mes';
+    };
+    res.json(await ia.diario(ativo, periodo));
+  }),
+);
+
 /**
  * O raciocínio ao vivo do motor. Alimenta a Sala de Operações.
  *

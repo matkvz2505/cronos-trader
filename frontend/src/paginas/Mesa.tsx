@@ -50,6 +50,12 @@ export function Mesa() {
   }, []);
 
   const semCandles = (saude?.candles ?? []).length === 0;
+  const lidos = Object.values(leituras).filter(Boolean) as Raciocinio[];
+  const dadosVelhos = lidos.length > 0 && lidos.every((r) => !r.dadosFrescos);
+  const maisRecente = lidos.reduce<number | null>(
+    (min, r) => (min === null || r.idadeMinutos < min ? r.idadeMinutos : min),
+    null,
+  );
 
   return (
     <div className="space-y-6">
@@ -62,22 +68,32 @@ export function Mesa() {
             Gatilho em 5min, viés em 15/30/60min. O motor sinaliza — você opera.
           </p>
         </div>
-        <span className="flex items-center gap-1.5 text-xs text-texto-fraco">
+        {/*
+          "Ao vivo" só quando as DUAS coisas valem: o canal está conectado E o dado é
+          recente. Conexão aberta com candle de ontem não é tempo real — é uma tela que
+          mente com confiança.
+        */}
+        <span
+          className={`flex items-center gap-1.5 text-xs ${
+            dadosVelhos ? 'text-aviso' : 'text-texto-fraco'
+          }`}
+        >
           <span
             className={`h-1.5 w-1.5 rounded-full ${
-              estado === 'conectado' ? 'bg-alta' : estado === 'conectando' ? 'animate-pulse bg-aviso' : 'bg-baixa'
+              estado !== 'conectado'
+                ? estado === 'conectando'
+                  ? 'animate-pulse bg-aviso'
+                  : 'bg-baixa'
+                : dadosVelhos
+                  ? 'bg-aviso'
+                  : 'animate-pulse bg-alta'
             }`}
           />
-          {estado === 'conectado' ? 'ao vivo' : estado}
+          {estado !== 'conectado' ? estado : dadosVelhos ? 'dados parados' : 'ao vivo'}
         </span>
       </header>
 
-      {semCandles && saude && (
-        <Alerta tom="aviso">
-          <strong>Nenhum candle no banco.</strong> O motor não tem o que ler. Ligue o coletor
-          com o MetaTrader 5 aberto: <code>.\cronos.ps1 coletor</code>
-        </Alerta>
-      )}
+      {(semCandles || dadosVelhos) && <EstadoDaColeta semCandles={semCandles} idade={maisRecente} />}
 
       {carregando ? (
         <Carregando texto="lendo os dois mercados…" />
@@ -134,6 +150,48 @@ export function Mesa() {
         </section>
       )}
     </div>
+  );
+}
+
+/**
+ * Estado da coleta, explicado em vez de delegado.
+ *
+ * A versão anterior mandava o operador rodar `.\cronos.ps1 coletor`, e isso é o oposto
+ * de uma plataforma: pedir que a pessoa faça o trabalho que o sistema deveria fazer.
+ * Agora a coleta sobe sozinha (tarefa do Windows, no logon e às 08h55), e esta caixa só
+ * explica **por que** ainda não há dado — que quase sempre é uma de duas coisas: fora do
+ * pregão, ou terminal MT5 fechado.
+ */
+function EstadoDaColeta({ semCandles, idade }: { semCandles: boolean; idade: number | null }) {
+  const agora = new Date();
+  const diaUtil = agora.getDay() >= 1 && agora.getDay() <= 5;
+  const dentroDoPregao = diaUtil && agora.getHours() >= 9 && agora.getHours() < 18;
+
+  if (!dentroDoPregao) {
+    const proximo = diaUtil && agora.getHours() < 9 ? 'hoje às 9h' : 'no próximo pregão, às 9h';
+    return (
+      <Alerta tom="info">
+        <strong>Pregão fechado.</strong> A coleta reinicia sozinha {proximo} — não há nada para
+        ligar. Os preços abaixo são do último fechamento
+        {idade !== null && idade >= 60 ? `, há ${(idade / 60).toFixed(0)} horas` : ''}.
+      </Alerta>
+    );
+  }
+
+  return (
+    <Alerta tom="aviso">
+      <strong>Pregão aberto, mas não está chegando dado.</strong>{' '}
+      {semCandles
+        ? 'O banco está vazio.'
+        : `O candle mais recente tem ${
+            idade !== null && idade >= 60
+              ? `${(idade / 60).toFixed(0)} horas`
+              : `${idade?.toFixed(0) ?? '?'} minutos`
+          }.`}{' '}
+      A coleta roda automaticamente, então isto quase sempre significa uma coisa só:{' '}
+      <strong>o MetaTrader 5 não está aberto e logado</strong>. Abra o terminal — a coleta
+      religa sozinha em até um minuto.
+    </Alerta>
   );
 }
 

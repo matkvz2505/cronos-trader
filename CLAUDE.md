@@ -156,6 +156,33 @@ npm run build
 frontend 5180 · backend 1840 · motor 1841 · Postgres 5460 · Adminer 5461 ·
 Redis 6400 · LiteLLM 4010 · Langfuse 3010
 
+## A coleta é automática — nunca peça comando ao operador
+
+O coletor MT5 roda como **tarefa agendada do Windows** (`tools/instalar-coletor.ps1`),
+com dois gatilhos: no logon e às 08h55 de segunda a sexta. Reinicia sozinho a cada minuto
+se cair. Log em `logs/coletor.log`.
+
+O processo é **consciente do pregão**: coleta das 9h às 18h em dias úteis, dorme fora
+disso e reconecta quando o terminal MT5 volta. Ele não morre no fim do dia — um processo
+que termina às 18h precisa de alguém para religá-lo, e "alguém" vira o operador lembrando
+de rodar comando.
+
+**Tarefa agendada e não serviço do Windows:** serviço roda na sessão 0, sem acesso à
+sessão interativa — e o MetaTrader 5 conversa por IPC com um terminal que vive na sessão
+do usuário. Serviço não enxergaria o terminal.
+
+Consequência para a UI: **nenhuma tela pode instruir o operador a rodar `.\cronos.ps1
+coletor`**. Quando falta dado, a causa é uma de duas, e a tela deve dizer qual: pregão
+fechado, ou terminal MT5 não aberto.
+
+Duas armadilhas na instalação, ambas já resolvidas e fáceis de reintroduzir:
+
+- **`Get-Command python` devolve o stub da Microsoft Store**, que abre a loja em vez de
+  executar. Pergunte ao próprio Python: `python -c "import sys; print(sys.executable)"`.
+- **`cmd /c "... >> \"log\""` quebra** por aninhamento de aspas. Por isso o instalador
+  gera um `.bat`. E o `-u` do Python é obrigatório: sem ele a saída redirecionada fica
+  buferizada e o log some justamente quando é preciso.
+
 ## Docker — o que costuma morder
 
 - **`NODE_ENV=production` no container + `JWT_SECRET` de exemplo = boot recusado.** É o
@@ -168,6 +195,13 @@ Redis 6400 · LiteLLM 4010 · Langfuse 3010
 - **O `migrate` é one-shot** e usa o estágio `build` do backend: o Prisma CLI e o `tsx` são
   devDependencies e não existem na imagem de runtime, de propósito.
 - **O Langfuse demora no primeiro boot** — roda as próprias migrations. O `up` dá 180s.
+- **O LiteLLM exige banco próprio.** Sem `database_url` a Admin UI devolve
+  "Authentication Error, Not connected to DB!" no login. O banco `litellm` é criado pelo
+  init do Postgres; em volume já existente:
+  `docker compose exec postgres createdb -U trader litellm`.
+- **Não use modelo de raciocínio no slot `rapido`.** O `qwen3-32b` gastava 183 tokens
+  *pensando* para responder "OK" — com `max_tokens` apertado a resposta volta vazia.
+  Tarefa mecânica pede modelo de resposta direta.
 - **Timeouts do nginx** estão em 300s para `/api` (backtest longo) e 3600s para `/ws`
   (conexão ociosa entre candles). Os defaults de 60s cortariam os dois.
 

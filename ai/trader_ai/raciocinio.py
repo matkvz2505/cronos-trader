@@ -17,19 +17,29 @@ organiza para consumo humano.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import numpy as np
 
-from . import confluencia, estrutura as est, fibonacci as fib, medias as medias_mod
+from . import confluencia, multitimeframe, padroes
 from . import contexto as ctx_mod
-from . import multitimeframe, padroes
+from . import estrutura as est
+from . import fibonacci as fib
+from . import medias as medias_mod
 from .decisao import montar
-from .indicadores import atr as calc_atr
 from .indicadores import bollinger, macd, rsi
 from .limiares import PADRAO, Limiares
 from .tipos import Contexto, Direcao, Serie, Tendencia, Timeframe
 
 TIMEFRAMES_PAINEL = (Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1)
+
+MINUTOS_PARA_DADO_VELHO = 15.0
+"""Acima disso a leitura deixa de ser "ao vivo".
+
+Três candles de 5 minutos. Com o coletor rodando, o atraso normal é de segundos; passar
+de 15 minutos significa que o coletor caiu, o terminal fechou ou o pregão acabou. Em
+qualquer um dos casos a tela precisa parar de se apresentar como tempo real.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +90,17 @@ class Vigilancia:
 class Raciocinio:
     ativo: str
     momento: str
+    """Timestamp do último candle — não é a hora atual."""
+
+    idade_minutos: float
+    """Quantos minutos se passaram desde o último candle.
+
+    É o número que diz se a tela está **de fato** ao vivo. Sem ele, uma leitura de ontem
+    às 15h30 aparece com a mesma cara de uma leitura de agora — e o operador acredita
+    estar vendo o mercado quando está vendo história.
+    """
+
+    dados_frescos: bool
     preco: float
     variacao_dia: float
 
@@ -217,13 +238,14 @@ def _niveis_ativos(serie: Serie, i: int, ctx: Contexto, lim: Limiares) -> list[d
 
     estrutura = est.ler(serie, i, lim)
     for faixa in estrutura.faixas:
+        faixa_texto = f"{faixa.preco_min:,.0f}–{faixa.preco_max:,.0f}".replace(",", ".")
         niveis.append(
             {
                 "preco": faixa.centro,
                 "rotulo": f"zona de {faixa.tipo}",
                 "origem": "estrutura",
                 "peso": faixa.forca,
-                "nota": f"{faixa.toques} toques · {faixa.preco_min:,.0f}–{faixa.preco_max:,.0f}".replace(",", "."),
+                "nota": f"{faixa.toques} toques · {faixa_texto}",
             }
         )
 
@@ -365,9 +387,24 @@ def ler(
 
                     sinal_dict = sinal_para_dict(sinal)
 
+    # Estado do mercado pelo RELÓGIO, não pelo candle.
+    #
+    # `ctx.janela_pregao` descreve a janela em que aquele **candle** aconteceu — é o que
+    # a confluência precisa, e está certo para o backtest. Mas para a tela ao vivo a
+    # pergunta é outra: o mercado está aberto AGORA? Usar o candle aqui fazia a tela
+    # dizer "pregão aberto · abertura-eua" às 4 da manhã, porque o último candle era das
+    # 15h30 do dia anterior.
+    agora = datetime.now()
+    janela_agora = ctx_mod.janela_de(agora.time())
+    mercado_aberto = janela_agora.opera and agora.weekday() < 5
+    idade = max(0.0, (agora - base[i].ts).total_seconds() / 60.0)
+    frescos = idade <= MINUTOS_PARA_DADO_VELHO
+
     return Raciocinio(
         ativo=base.ativo,
         momento=base[i].ts.isoformat(),
+        idade_minutos=round(idade, 1),
+        dados_frescos=frescos,
         preco=preco,
         variacao_dia=round(variacao, 2),
         vies=vies.descrever(),
@@ -378,18 +415,39 @@ def ler(
         niveis=_niveis_ativos(base, i, ctx, limiares),
         vigiando=vigiando,
         sinal=sinal_dict,
-        janela_pregao=ctx.janela_pregao,
-        opera_agora=ctx_mod.opera_agora(ctx),
-        veredito=_veredito(ctx, vies, sinal_dict, vigiando),
+        janela_pregao=janela_agora.rotulo,
+        opera_agora=mercado_aberto,
+        veredito=_veredito(ctx, vies, sinal_dict, vigiando, mercado_aberto, idade, frescos),
     )
 
 
-def _veredito(ctx: Contexto, vies, sinal: dict | None, vigiando: list[Vigilancia]) -> str:
-    """A frase de uma linha que resume o estado. É o que o operador lê primeiro."""
+def _veredito(
+    ctx: Contexto,
+    vies,
+    sinal: dict | None,
+    vigiando: list[Vigilancia],
+    mercado_aberto: bool,
+    idade_minutos: float,
+    frescos: bool,
+) -> str:
+    """A frase de uma linha que resume o estado. É o que o operador lê primeiro.
+
+    A ordem das checagens importa: **dado velho vem antes de tudo**. Qualquer leitura
+    sobre tendência ou padrão é irrelevante se o candle mais recente é de ontem — dizer
+    "aguardando padrão" nesse caso sugere que o motor está observando o mercado quando
+    ele está olhando para uma foto.
+    """
+    if not frescos:
+        horas = idade_minutos / 60
+        quanto = f"{horas:.0f} h" if horas >= 1 else f"{idade_minutos:.0f} min"
+        return (
+            f"Dados parados há {quanto}. Isto não é o mercado agora — é a última leitura "
+            "gravada. Ligue o coletor com o MetaTrader 5 aberto para voltar ao tempo real."
+        )
     if sinal is not None:
         return "Entrada aprovada — os filtros passaram."
-    if not ctx_mod.opera_agora(ctx):
-        return f"Fora do horário de operação ({ctx.janela_pregao}). Nada é aberto agora."
+    if not mercado_aberto:
+        return "Pregão fechado. Nenhuma posição é aberta fora do horário."
     if ctx.tendencia is Tendencia.LATERAL:
         return (
             "Mercado lateral. Padrão de reversão não tem o que reverter — "
@@ -409,6 +467,8 @@ def para_dict(r: Raciocinio) -> dict:
     return {
         "ativo": r.ativo,
         "momento": r.momento,
+        "idadeMinutos": r.idade_minutos,
+        "dadosFrescos": r.dados_frescos,
         "preco": r.preco,
         "variacaoDia": r.variacao_dia,
         "vies": r.vies,

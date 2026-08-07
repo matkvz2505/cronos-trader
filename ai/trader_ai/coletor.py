@@ -21,10 +21,12 @@ nada novo — reiniciar a cada dia não é necessário.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import signal
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+from datetime import time as hora_do_dia
 
 from . import padroes, persistencia
 from .fontes.base import FonteIndisponivel
@@ -33,7 +35,45 @@ from .tipos import Timeframe
 
 TIMEFRAMES = (Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1)
 
+ABERTURA = hora_do_dia(9, 0)
+FECHAMENTO = hora_do_dia(18, 0)
+"""Janela de coleta, horário de Brasília.
+
+O coletor **não morre** fora dela: dorme e acorda. Um processo que termina às 18h precisa
+de alguém para religá-lo às 9h — e "alguém" acaba sendo o operador lembrando de rodar um
+comando, que é exatamente o que esta plataforma não pode exigir.
+"""
+
+ESPERA_FORA_DO_PREGAO = 60
+"""Segundos entre checagens quando o mercado está fechado. Um minuto é folgado: o pior
+atraso possível na reabertura é de 60 segundos."""
+
 _parar = False
+
+
+def dentro_do_pregao(momento: datetime | None = None) -> bool:
+    """Pregão aberto: dia útil entre 9h e 18h.
+
+    Feriados da B3 não são modelados. O custo de errar é baixo — o coletor tenta ler,
+    não vem candle novo, e o ciclo seguinte tenta de novo.
+    """
+    agora = momento or datetime.now()
+    if agora.weekday() >= 5:
+        return False
+    return ABERTURA <= agora.time() < FECHAMENTO
+
+
+def _segundos_ate_abertura(agora: datetime) -> int:
+    """Quanto falta para a próxima abertura, para o log dizer algo útil."""
+    alvo = agora.replace(
+        hour=ABERTURA.hour, minute=ABERTURA.minute, second=0, microsecond=0
+    )
+    # Se a abertura de hoje já passou, mira na de amanhã; depois pula o fim de semana.
+    if alvo <= agora:
+        alvo += timedelta(days=1)
+    while alvo.weekday() >= 5:
+        alvo += timedelta(days=1)
+    return max(0, int((alvo - agora).total_seconds()))
 
 
 def _sinal_de_parada(*_) -> None:
@@ -117,10 +157,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"banco inacessível: {detalhe}", file=sys.stderr)
         return 1
 
-    try:
-        from .fontes.mt5 import MetaTrader5Fonte
-    except ImportError as erro:
-        print(f"{erro}", file=sys.stderr)
+    # Falha cedo e com mensagem útil se o pacote MT5 não existir — muito melhor que
+    # descobrir isso no primeiro ciclo, dentro do laço de reconexão.
+    if importlib.util.find_spec("MetaTrader5") is None:
+        print(
+            "pacote MetaTrader5 não instalado. Só funciona no Windows:\n"
+            '  pip install -e ".[mt5]"',
+            file=sys.stderr,
+        )
         return 1
 
     signal.signal(signal.SIGINT, _sinal_de_parada)
@@ -128,28 +172,105 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"coletor: {', '.join(args.ativos)} · {len(TIMEFRAMES)} timeframes · "
-        f"ciclo de {args.intervalo}s · capital R$ {args.capital:,.2f}"
+        f"ciclo de {args.intervalo}s · capital R$ {args.capital:,.2f}\n"
+        f"pregão {ABERTURA:%H:%M}–{FECHAMENTO:%H:%M} em dias úteis · "
+        "coleta contínua, dorme fora do horário"
     )
+
+    if args.uma_vez:
+        return _ciclo_unico(args)
+
+    return _laco_permanente(args)
+
+
+def _ciclo_unico(args) -> int:
+    """Um ciclo e sai. Usado por scripts e para depuração."""
+    from .fontes.mt5 import MetaTrader5Fonte
 
     try:
         with MetaTrader5Fonte(continuo=args.continuo) as fonte:
-            print(f"MT5 conectado · símbolo: {fonte.resolver_simbolo(args.ativos[0])}\n")
-            while not _parar:
-                ciclo(fonte, args.ativos, args.capital, args.barras, args.verboso)
-                if args.uma_vez:
-                    break
-                # Sono fatiado para que Ctrl+C responda em 1 segundo, não em 30.
-                for _ in range(args.intervalo):
-                    if _parar:
-                        break
-                    time.sleep(1)
+            ciclo(fonte, args.ativos, args.capital, args.barras, args.verboso)
     except FonteIndisponivel as erro:
-        print(f"\nMT5 indisponível: {erro}", file=sys.stderr)
-        print("Rode `python scripts/diagnostico_mt5.py` para ver o que falta.", file=sys.stderr)
+        print(f"MT5 indisponível: {erro}", file=sys.stderr)
         return 1
+    return 0
+
+
+def _laco_permanente(args) -> int:
+    """Roda para sempre: coleta durante o pregão, dorme fora dele, reconecta se cair.
+
+    Três decisões que fazem a diferença entre um script e um serviço:
+
+    **Não morre fora do pregão.** Dorme e acorda. Um processo que termina às 18h precisa
+    de alguém para religá-lo — e "alguém" vira o operador lembrando de rodar um comando.
+
+    **Reconecta sozinho.** O terminal MT5 fecha, a máquina hiberna, a corretora derruba a
+    sessão. Nada disso pode exigir intervenção: o laço espera e tenta de novo.
+
+    **Só conecta ao MT5 quando precisa.** Fora do pregão a conexão é solta, o que evita
+    segurar o terminal a noite inteira e permite atualizá-lo sem conflito.
+    """
+    from .fontes.mt5 import MetaTrader5Fonte
+
+    espera_reconexao = 30
+
+    while not _parar:
+        agora = datetime.now()
+
+        if not dentro_do_pregao(agora):
+            faltam = _segundos_ate_abertura(agora)
+            horas = faltam / 3600
+            print(
+                f"[{agora:%d/%m %H:%M}] fora do pregão — próxima abertura em "
+                f"{horas:.1f} h. Dormindo."
+            )
+            _dormir(min(faltam, ESPERA_FORA_DO_PREGAO * 10) or ESPERA_FORA_DO_PREGAO)
+            continue
+
+        try:
+            with MetaTrader5Fonte(continuo=args.continuo) as fonte:
+                print(
+                    f"[{datetime.now():%d/%m %H:%M}] MT5 conectado · "
+                    f"símbolo {fonte.resolver_simbolo(args.ativos[0])} · coletando"
+                )
+                espera_reconexao = 30
+
+                while not _parar and dentro_do_pregao():
+                    ciclo(fonte, args.ativos, args.capital, args.barras, args.verboso)
+                    _dormir(args.intervalo)
+
+                if not _parar:
+                    print(f"[{datetime.now():%d/%m %H:%M}] pregão encerrado — soltando o MT5")
+
+        except FonteIndisponivel as erro:
+            print(
+                f"[{datetime.now():%d/%m %H:%M}] MT5 indisponível: {erro}\n"
+                f"  nova tentativa em {espera_reconexao}s "
+                "(o terminal precisa estar aberto e logado)",
+                file=sys.stderr,
+            )
+            _dormir(espera_reconexao)
+            # Backoff até 5 minutos: se o terminal está fechado há horas, insistir a
+            # cada 30 segundos só enche o log.
+            espera_reconexao = min(300, espera_reconexao * 2)
+        except Exception as erro:  # noqa: BLE001 — o serviço não pode morrer por um ciclo
+            print(f"[{datetime.now():%d/%m %H:%M}] erro no ciclo: {erro}", file=sys.stderr)
+            _dormir(espera_reconexao)
 
     print("coletor encerrado.")
     return 0
+
+
+def _dormir(segundos: float) -> None:
+    """Sono fatiado, para que Ctrl+C e SIGTERM respondam em 1 segundo.
+
+    Um `time.sleep(3600)` deixaria o serviço surdo por uma hora — o Windows mataria o
+    processo à força no shutdown, sem chance de fechar a conexão com o MT5.
+    """
+    for _ in range(max(1, int(segundos))):
+        if _parar:
+            return
+        time.sleep(1)
 
 
 if __name__ == "__main__":

@@ -31,7 +31,8 @@
 param(
     [Parameter(Position = 0)]
     [ValidateSet('up', 'down', 'restart', 'build', 'status', 'logs', 'amostra', 'coletor',
-                 'diagnostico', 'testes', 'shell', 'nuke', 'dev')]
+                 'instalar-coletor', 'remover-coletor', 'diagnostico', 'testes', 'shell',
+                 'nuke', 'dev')]
     [string]$Comando = 'status',
 
     [Parameter(Position = 1)]
@@ -206,8 +207,19 @@ switch ($Comando) {
         Escrever "`nAbra http://localhost:5180" 'Green'
     }
 
+    'instalar-coletor' {
+        Titulo 'Instalando o coletor como tarefa automática'
+        & (Join-Path $Raiz 'tools\instalar-coletor.ps1')
+        Start-ScheduledTask -TaskName 'CronosTrader-Coletor' -ErrorAction SilentlyContinue
+        Escrever 'Tarefa iniciada. A partir de agora ela sobe sozinha no logon.' 'Green'
+    }
+
+    'remover-coletor' {
+        & (Join-Path $Raiz 'tools\instalar-coletor.ps1') -Remover
+    }
+
     'coletor' {
-        Titulo 'Coletor MT5 (host)'
+        Titulo 'Coletor MT5 (host, em janela)'
         Escrever 'Requer o terminal MetaTrader 5 aberto e logado numa corretora B3.' 'Yellow'
         Escrever 'Esta peça não containeriza: o pacote MetaTrader5 é Windows-only.' 'DarkGray'
         Start-Process powershell -ArgumentList @(

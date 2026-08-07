@@ -78,6 +78,13 @@ export const ia = {
   /** As medições que sustentam os pesos do motor — Fibonacci, médias, janelas. */
   estudos: () => chamar<Record<string, unknown>>('/estudos'),
 
+  /** Fechamento do período e os níveis que o próximo pregão começa olhando. */
+  diario: (ativo: string, periodo: 'dia' | 'semana' | 'mes') =>
+    chamar<Record<string, unknown>>('/diario', {
+      method: 'POST',
+      body: JSON.stringify({ ativo, periodo }),
+    }),
+
   /** O que o motor está pensando agora — alimenta a Sala de Operações. */
   raciocinio: (ativo: string, capital: number) =>
     chamar<Record<string, unknown>>('/raciocinio', {

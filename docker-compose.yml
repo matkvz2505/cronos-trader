@@ -41,6 +41,9 @@ services:
       - '5460:5432'
     volumes:
       - trader_pg:/var/lib/postgresql/data
+      # Cria o banco do LiteLLM no primeiro boot. Sem ele a Admin UI do gateway
+      # devolve "Not connected to DB!" no login.
+      - ./tools/postgres-init:/docker-entrypoint-initdb.d:ro
     networks: [cronos-net]
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U trader -d cronos_trader']
@@ -204,6 +207,7 @@ services:
     container_name: cronos-trader-litellm
     restart: unless-stopped
     depends_on:
+      postgres: { condition: service_healthy }
       langfuse: { condition: service_started }
     ports:
       - '4010:4000'
@@ -212,7 +216,9 @@ services:
     command: ['--config', '/app/config.yaml', '--port', '4000']
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-cronos-trader-dev}
-      # Toda a cadeia roda pelo OpenRouter — free, barato e forte. Sem Claude.
+      # Banco próprio do gateway: Admin UI, chaves virtuais e registro de gastos.
+      DATABASE_URL: postgresql://trader:trader@postgres:5432/litellm
+      # Toda a cadeia roda pelo OpenRouter. Sem Claude.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       LANGFUSE_HOST: http://langfuse:3000
       LANGFUSE_PUBLIC_KEY: pk-lf-cronos-trader-dev

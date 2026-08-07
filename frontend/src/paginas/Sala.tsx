@@ -4,7 +4,8 @@ import { useParams } from 'react-router-dom';
 import { CartaoSinal } from '../components/CartaoSinal';
 import { Alerta, Carregando } from '../components/ui';
 import { api } from '../lib/api';
-import { horario, preco } from '../lib/formato';
+import { preco } from '../lib/formato';
+import { idadeDe, useRelogio } from '../lib/useRelogio';
 import { useSinaisAoVivo } from '../lib/useSinaisAoVivo';
 import type { Ativo, Conta, LeituraTimeframe, Raciocinio, Sinal, Vigilancia } from '../lib/tipos';
 
@@ -75,6 +76,19 @@ export function Sala() {
 
       {erro && <Alerta tom="erro">{erro}</Alerta>}
 
+      {raciocinio && !raciocinio.dadosFrescos && (
+        <Alerta tom="aviso">
+          <strong>Esta tela não é o mercado agora.</strong> O candle mais recente tem{' '}
+          {raciocinio.idadeMinutos >= 60
+            ? `${(raciocinio.idadeMinutos / 60).toFixed(0)} horas`
+            : `${raciocinio.idadeMinutos.toFixed(0)} minutos`}
+          . Tudo abaixo — contas, níveis, vigilância — descreve aquele instante, não este.{' '}
+          {raciocinio.operaAgora
+            ? 'Com o pregão aberto, isto quase sempre significa que o MetaTrader 5 está fechado. Abra o terminal: a coleta religa sozinha em até um minuto.'
+            : 'O pregão está fechado — a coleta reinicia sozinha às 9h.'}
+        </Alerta>
+      )}
+
       {raciocinio && (
         <>
           <Veredito raciocinio={raciocinio} sinais={sinaisDoAtivo} />
@@ -108,14 +122,20 @@ function Cabecalho({
   atualizando: boolean;
   ultimaAtualizacao: Date | null;
 }) {
+  const agora = useRelogio();
   const subiu = (raciocinio?.variacaoDia ?? 0) >= 0;
+  const frescos = raciocinio?.dadosFrescos ?? false;
 
   return (
     <header className="cartao surge flex flex-wrap items-end gap-x-8 gap-y-4 px-6 py-5">
       <div>
         <p className="rotulo">{NOME[ativo]}</p>
         <div className="mt-1 flex items-baseline gap-3">
-          <span className="numerico text-4xl font-semibold tracking-tight">
+          <span
+            className={`numerico text-4xl font-semibold tracking-tight ${
+              frescos ? '' : 'text-texto-suave'
+            }`}
+          >
             {raciocinio ? preco(raciocinio.preco, ativo) : '—'}
           </span>
           {raciocinio && (
@@ -132,27 +152,49 @@ function Cabecalho({
       {raciocinio && (
         <>
           <Indicador rotulo="Viés" valor={raciocinio.viesDirecao} destaque={raciocinio.alinhado} />
-          <Indicador rotulo="Janela" valor={raciocinio.janelaPregao} />
           <Indicador
             rotulo="Pregão"
-            valor={raciocinio.operaAgora ? 'aberto' : 'fechado'}
+            valor={raciocinio.operaAgora ? `aberto · ${raciocinio.janelaPregao}` : 'fechado'}
             tom={raciocinio.operaAgora ? 'alta' : 'fraco'}
           />
         </>
       )}
 
-      <div className="ml-auto text-right text-xs text-texto-fraco">
-        <span className="flex items-center justify-end gap-1.5">
+      {/*
+        O que corre aqui é a IDADE do último candle, não o horário do último fetch.
+        Horário fica congelado entre atualizações e o operador lê como tela travada;
+        idade corre sozinha e denuncia dado velho — que é a informação que importa.
+      */}
+      <div className="ml-auto text-right">
+        <span
+          className={`flex items-center justify-end gap-1.5 text-xs ${
+            frescos ? 'text-texto-fraco' : 'text-aviso'
+          }`}
+        >
           <span
             className={`h-1.5 w-1.5 rounded-full ${
-              atualizando ? 'animate-pulse bg-marca' : 'bg-alta'
+              atualizando
+                ? 'animate-pulse bg-marca'
+                : frescos
+                  ? 'animate-pulse bg-alta'
+                  : 'bg-aviso'
             }`}
           />
-          {atualizando ? 'lendo…' : 'ao vivo'}
+          {atualizando ? 'lendo…' : frescos ? 'ao vivo' : 'dados parados'}
         </span>
+        {raciocinio && (
+          <span
+            className={`numerico mt-0.5 block text-xs ${
+              frescos ? 'text-texto-fraco' : 'text-aviso'
+            }`}
+            title={`Último candle: ${new Date(raciocinio.momento).toLocaleString('pt-BR')}`}
+          >
+            candle {idadeDe(raciocinio.momento, agora)}
+          </span>
+        )}
         {ultimaAtualizacao && (
-          <span className="numerico mt-0.5 block">
-            {ultimaAtualizacao.toLocaleTimeString('pt-BR')}
+          <span className="numerico mt-0.5 block text-[11px] text-texto-fraco opacity-70">
+            lido {idadeDe(ultimaAtualizacao, agora)}
           </span>
         )}
       </div>
@@ -447,7 +489,14 @@ function PainelEstrutura({ raciocinio }: { raciocinio: Raciocinio }) {
         )}
 
         <p className="border-t border-borda pt-2.5 text-xs text-texto-fraco">
-          Última leitura do candle de {horario(raciocinio.momento)}.
+          Leitura do candle de{' '}
+          {new Date(raciocinio.momento).toLocaleString('pt-BR', {
+            day: '2-digit',
+            month: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
+          .
         </p>
       </div>
     </section>

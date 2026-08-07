@@ -33,12 +33,29 @@ esse palpite por evidência.
 
 | Pasta | O que é | Estado |
 |---|---|---|
-| [ai/](ai/) | Motor: 60 detectores, confluência, decisão, backtest, serviço HTTP e coletor MT5 | **funcionando** |
-| [backend/](backend/) | API Node + TypeScript: auth, sinais, candles, backtest, WebSocket | **funcionando** |
-| [frontend/](frontend/) | 6 telas: painel, gráfico ao vivo, sinais, catálogo, backtest | **funcionando** |
-| [kb/](kb/) | Knowledge base destilada do ebook — consumida pelos agentes via RAG | pronta |
-| [docs/](docs/) | Arquitetura, roadmap, fontes de dados, errata do ebook | pronta |
-| [tools/](tools/) | LiteLLM (gateway) + Langfuse (observabilidade de IA) | planejado (Sprint 7) |
+| [ai/](ai/) | Motor: 60 detectores, confluência, decisão, estrutura, backtest, serviço HTTP e coletor MT5 | **funcionando** |
+| [backend/](backend/) | API Node + TypeScript: auth, sinais, candles, diário, WebSocket de alertas | **funcionando** |
+| [frontend/](frontend/) | Mesa, Alertas, Sala por ativo, Gráfico, Diário, Histórico, Conhecimento | **funcionando** |
+| [kb/](kb/) | Knowledge base: ebook destilado + médias, indicadores, estrutura, contratos | pronta |
+| [docs/](docs/) | Arquitetura, produto, estudos medidos, fontes de dados, errata | pronta |
+| [tools/](tools/) | LiteLLM (:4010) + Langfuse (:3010) + instalador do coletor | **funcionando** |
+
+## As telas
+
+| Rota | O que responde |
+|---|---|
+| `/` **Mesa** | Para onde eu olho agora? Os dois ativos lado a lado. |
+| `/alertas` | O que aconteceu enquanto eu não olhava. Push por WebSocket. |
+| `/sala/win` · `/sala/wdo` | **O agente ao vivo.** Tem entrada? Se não, por quê? Qual a conta? |
+| `/grafico` | Candles anotados: canal, pivôs, rompimentos, zonas, níveis do sinal. |
+| `/diario` | Fechamento de dia/semana/mês + preparação do próximo pregão. |
+| `/historico` | Sinais passados com o resultado de cada um. |
+| `/conhecimento` | Auditoria do motor: padrões, medições, validação fora da amostra. |
+
+A tela central é a **Sala**, e o que ela faz de diferente é mostrar **as recusas**. Em 60
+mil candles, 33.751 detecções viraram 293 sinais — 99,1% recusadas. Um produto que esconde
+isso parece um oráculo; um que mostra vira ferramenta de estudo. Ver
+[docs/PRODUTO.md](docs/PRODUTO.md).
 
 ## Arquitetura
 
@@ -97,12 +114,25 @@ Gera 60 pregões sintéticos, importa e roda o motor. Exercita a pipeline inteir
 sinais, placar, backtest. **Não valida estratégia**: é random walk, e o gerador avisa isso
 ao rodar.
 
-### Ligar dados reais
+### Ligar dados reais — uma vez, e nunca mais
 
 ```powershell
-.\cronos.ps1 diagnostico    # 6 checagens do MetaTrader 5, parando na primeira que falhar
-.\cronos.ps1 coletor        # MT5 → Postgres → motor, em ciclo, no host
+.\cronos.ps1 diagnostico        # 6 checagens do MetaTrader 5, parando na primeira que falhar
+.\cronos.ps1 instalar-coletor   # registra a coleta como tarefa automática do Windows
 ```
+
+Depois disso **você não roda mais nada**. A coleta:
+
+- sobe no logon e às **08h55** de segunda a sexta
+- coleta das **9h às 18h**, dorme fora do horário e reconecta sozinha
+- reinicia a cada minuto se cair · log em `logs/coletor.log`
+
+A única exigência diária é **deixar o MetaTrader 5 aberto e logado**. O pacote é
+Windows-only e conversa com o terminal por IPC — é a razão de a coleta rodar no host e não
+em container.
+
+> Tarefa agendada e não serviço do Windows: serviço roda na sessão 0, sem acesso à sessão
+> interativa, e não enxergaria o terminal MT5.
 
 ### Desenvolvimento com hot reload
 
@@ -110,23 +140,45 @@ ao rodar.
 .\cronos.ps1 dev            # infra em docker, app no host
 ```
 
+## Estado do edge — leia antes de operar
+
+Medido em 60 mil candles reais de WIN (jun/2024 a ago/2026, XP), walk-forward de 5 janelas:
+
+```
+expectância fora da amostra:  +0,04R por operação
+sinais:                       293 em 777 dias
+```
+
+Positiva, mas perto demais de zero para chamar de vantagem. **Não há edge comprovado.** O
+que existe são dois indícios com amostra, ambos pendentes de validação:
+
+- **Engolfo de Alta** — n=143, 47,6% de acerto, **+0,18R**
+- **Janela da abertura americana** (14h–16h) — n=115, 58,3%, **+0,40R**
+
+E um achado que contradiz a intuição: a janela das **10h–12h**, que parecia a de "tendência
+mais limpa", mede **−0,28R** em 205 operações. Detalhes em [docs/ESTUDOS.md](docs/ESTUDOS.md).
+
 ## Por onde começar
 
-1. [docs/ARQUITETURA.md](docs/ARQUITETURA.md) — as sete camadas do motor e por que existem
-2. [docs/FONTES-DE-DADOS.md](docs/FONTES-DE-DADOS.md) — o que é free, o que não é, e por que MT5
-3. [docs/ROADMAP.md](docs/ROADMAP.md) — as sprints em ordem de execução
-4. [docs/ERRATA-EBOOK.md](docs/ERRATA-EBOOK.md) — os erros do ebook que o código corrige
+1. [docs/PRODUTO.md](docs/PRODUTO.md) — o que é, contra quem, e por quê
+2. [docs/ARQUITETURA.md](docs/ARQUITETURA.md) — as sete camadas do motor e por que existem
+3. [docs/ESTUDOS.md](docs/ESTUDOS.md) — o que foi medido, e o que a medição derrubou
+4. [docs/FONTES-DE-DADOS.md](docs/FONTES-DE-DADOS.md) — o que é free, o que não é, e por que MT5
+5. [docs/ERRATA-EBOOK.md](docs/ERRATA-EBOOK.md) — os erros do ebook que o código corrige
+6. [docs/ROADMAP.md](docs/ROADMAP.md) — as sprints em ordem de execução
 
 ## Portas
 
-| Serviço | Porta |
-|---|---|
-| frontend | 5180 |
-| backend | 1840 |
-| motor (IA) | 1841 |
-| Postgres | 5460 |
-| Redis | 6400 |
-| Adminer | 5461 |
+| Serviço | Porta | Acesso |
+|---|---|---|
+| frontend | 5180 | `matheus2aroldo@gmail.com` / `Trader@2026!` |
+| backend | 1840 | `/api/v1` |
+| motor (IA) | 1841 | `/saude` |
+| Langfuse | 3010 | `admin@cronos.trader` / `cronos-dev-123` |
+| LiteLLM | 4010 | Admin UI com `LITELLM_MASTER_KEY` |
+| Adminer | 5461 | |
+| Postgres | 5460 | `trader` / `trader` |
+| Redis | 6400 | reservado |
 
 ## Aviso
 

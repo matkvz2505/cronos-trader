@@ -1,0 +1,12 @@
+-- Banco do LiteLLM, criado no primeiro boot do Postgres.
+--
+-- O gateway precisa de banco próprio para a Admin UI, as chaves virtuais e o registro
+-- de gastos. Sem ele o login da UI falha com "Authentication Error, Not connected to DB!".
+--
+-- Banco separado e não schema: o LiteLLM roda as próprias migrations do Prisma e cria
+-- dezenas de tabelas. Misturá-las com as do cronos-trader tornaria impossível olhar o
+-- banco do produto sem tropeçar nelas.
+--
+-- Este arquivo só roda quando o volume é criado do zero. Em volume já existente, use:
+--   docker compose exec postgres createdb -U trader litellm
+CREATE DATABASE litellm OWNER trader;

@@ -1,31 +1,39 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { lerSessao } from './api';
-import type { ResumoSinais, Sinal } from './tipos';
+import type { Alerta, ResumoSinais, Sinal } from './tipos';
 
 type Estado = 'conectando' | 'conectado' | 'desconectado';
 
 interface Mensagem {
-  tipo: 'estado.inicial' | 'sinais.abertos' | 'sinais.novos';
+  tipo: 'estado.inicial' | 'sinais.abertos' | 'alertas';
   dados: unknown;
 }
 
+const MAX_ALERTAS = 60;
+
 /**
- * Assinatura do WebSocket de sinais ao vivo.
+ * Assinatura do fluxo ao vivo: sinais abertos + alertas de transição.
  *
- * Reconexão com backoff exponencial limitado a 30s: sem teto, um backend fora do ar por
- * dez minutos faria o navegador tentar de hora em hora; sem backoff, faria centenas de
+ * Reconexão com backoff exponencial limitado a 30s. Sem teto, um backend fora por dez
+ * minutos faria o navegador tentar de hora em hora; sem backoff, faria centenas de
  * tentativas por minuto. O contador zera na primeira conexão bem-sucedida.
+ *
+ * Os alertas ficam num buffer local, não no banco: são um feed do que aconteceu desde
+ * que a aba abriu. Recarregar a página limpa — e isso é correto, porque um alerta de
+ * entrada acionada há três horas não é mais um alerta, é histórico.
  */
 export function useSinaisAoVivo() {
   const [estado, setEstado] = useState<Estado>('conectando');
   const [abertos, setAbertos] = useState<Sinal[]>([]);
   const [resumo, setResumo] = useState<ResumoSinais | null>(null);
-  const [ultimoNovo, setUltimoNovo] = useState<Sinal | null>(null);
+  const [alertas, setAlertas] = useState<Alerta[]>([]);
 
   const tentativas = useRef(0);
   const socketRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<number | null>(null);
+
+  const limparAlertas = useCallback(() => setAlertas([]), []);
 
   useEffect(() => {
     let desmontado = false;
@@ -49,15 +57,18 @@ export function useSinaisAoVivo() {
       socket.onmessage = (evento) => {
         try {
           const mensagem = JSON.parse(evento.data as string) as Mensagem;
+
           if (mensagem.tipo === 'estado.inicial') {
-            const dados = mensagem.dados as { abertos: Sinal[]; resumo: ResumoSinais };
-            setAbertos(dados.abertos);
-            setResumo(dados.resumo);
+            const d = mensagem.dados as { abertos: Sinal[]; resumo: ResumoSinais };
+            setAbertos(d.abertos);
+            setResumo(d.resumo);
           } else if (mensagem.tipo === 'sinais.abertos') {
             setAbertos(mensagem.dados as Sinal[]);
-          } else if (mensagem.tipo === 'sinais.novos') {
-            const novos = mensagem.dados as Sinal[];
-            if (novos.length > 0) setUltimoNovo(novos[0]!);
+          } else if (mensagem.tipo === 'alertas') {
+            const novos = mensagem.dados as Alerta[];
+            if (novos.length > 0) {
+              setAlertas((atuais) => [...novos, ...atuais].slice(0, MAX_ALERTAS));
+            }
           }
         } catch {
           // Mensagem malformada não pode derrubar a assinatura.
@@ -84,5 +95,5 @@ export function useSinaisAoVivo() {
     };
   }, []);
 
-  return { estado, abertos, resumo, ultimoNovo };
+  return { estado, abertos, resumo, alertas, limparAlertas };
 }
