@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Dados de mercado — pesados, reproduzíveis e potencialmente licenciados pela B3.
+# Gere com `python ai/scripts/gerar_amostra.py` ou baixe do MT5.
+ai/dados/
+dados/
+*.csv
+*.parquet
+!ai/tests/**/*.csv
+
+# Node (backend/ e frontend/, sprints 5 e 6)
+node_modules/
+.next/
+.output/
+*.tsbuildinfo
+
+# Segredos
+.env
+.env.*
+!.env.example
+
+# Sistema
+.DS_Store
+Thumbs.db

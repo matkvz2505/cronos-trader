@@ -1,0 +1,224 @@
+// Schema do cronos-trader.
+//
+// O backend Node é dono do schema; o serviço de IA em Python lê e escreve nas mesmas
+// tabelas via psycopg. Prisma é a fonte da verdade da estrutura — mudou aqui, roda
+// migration, e o Python acompanha (ai/trader_ai/persistencia.py).
+//
+// Escopo fechado: só WIN e WDO. Ativo é string livre no banco por simplicidade, mas
+// validado na borda (Zod no backend, `instrumentos.resolver` no Python).
+
+generator client {
+  provider = "prisma-client-js"
+  // `native` cobre o desenvolvimento no host (Windows); o alvo Debian cobre o container.
+  // Declarar os dois evita o clássico "Query engine binary not found" quando o mesmo
+  // `node_modules` é montado nos dois ambientes.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Papel {
+  USUARIO
+  ADMIN
+}
+
+enum Direcao {
+  ALTA
+  BAIXA
+}
+
+enum StatusSinal {
+  ABERTO // emitido, aguardando rompimento da entrada
+  ACIONADO // entrada atingida, posição viva
+  ALVO // encerrado no alvo
+  STOP // encerrado no stop
+  EXPIRADO // não acionou dentro da janela
+  CANCELADO // descartado manualmente
+}
+
+model Usuario {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  senhaHash String
+  nome      String
+  papel     Papel     @default(USUARIO)
+  ativo     Boolean   @default(true)
+  // Capital usado no dimensionamento de posição. Fica no usuário porque o mesmo sinal
+  // gera número de contratos diferente para cada conta.
+  capital   Decimal   @default(10000) @db.Decimal(14, 2)
+  criadoEm  DateTime  @default(now())
+  ultimoLogin DateTime?
+
+  sessoes   Sessao[]
+  anotacoes AnotacaoSinal[]
+
+  @@map("usuarios")
+}
+
+model Sessao {
+  id           String   @id @default(uuid())
+  usuarioId    String
+  // Refresh token opaco, guardado como sha256 — mesmo padrão do cronos-auth.
+  // Nunca armazenar o token em claro: vazamento do banco não pode virar sessão válida.
+  tokenHash    String   @unique
+  expiraEm     DateTime
+  revogadaEm   DateTime?
+  criadoEm     DateTime @default(now())
+  userAgent    String?
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
+  @@map("sessoes")
+}
+
+/// Candles OHLCV. Escritos pelo coletor MT5, lidos pelo motor e pelo gráfico.
+model Candle {
+  ativo      String
+  timeframe  String // M5 | M15 | M30 | H1 | D1
+  ts         DateTime
+  abertura   Decimal @db.Decimal(14, 2)
+  maxima     Decimal @db.Decimal(14, 2)
+  minima     Decimal @db.Decimal(14, 2)
+  fechamento Decimal @db.Decimal(14, 2)
+  volume     Decimal @default(0) @db.Decimal(16, 2)
+
+  // Chave composta: o coletor faz upsert por (ativo, timeframe, ts). É o que torna a
+  // reingestão idempotente — rodar o coletor duas vezes não duplica candle.
+  @@id([ativo, timeframe, ts])
+  @@index([ativo, timeframe, ts(sort: Desc)])
+  @@map("candles")
+}
+
+/// Sinal emitido pelo motor. Imutável no que descreve a decisão; `status` e o
+/// resultado são atualizados conforme o mercado anda.
+model Sinal {
+  id            String      @id @default(uuid())
+  ativo         String
+  timeframe     String
+  ts            DateTime
+  direcao       Direcao
+  padraoId      String
+  padraoNome    String
+
+  entrada       Decimal @db.Decimal(14, 2)
+  stop          Decimal @db.Decimal(14, 2)
+  alvo          Decimal @db.Decimal(14, 2)
+  origemAlvo    String
+  riscoPontos   Decimal @db.Decimal(14, 2)
+  retornoPontos Decimal @db.Decimal(14, 2)
+  rr            Decimal @db.Decimal(6, 2)
+  contratos     Int
+
+  score          Decimal @db.Decimal(5, 4)
+  confiabilidade Decimal @db.Decimal(5, 4)
+  /// Fatores de confluência aplicados: [{nome, multiplicador, detalhe}].
+  /// Guardado em JSON porque é a explicação auditável do score — a tela mostra
+  /// exatamente por que aquele número saiu.
+  fatores        Json
+  observacoes    String[]  @default([])
+  zonaQuente     Boolean   @default(false)
+  viesMtf        String? // resumo do viés multi-timeframe no momento da emissão
+
+  /// A tese do sinal: onde, quando, por quê, o argumento contra e a invalidação.
+  /// Congelada no momento da emissão — reconstruí-la depois daria outra resposta,
+  /// porque o contexto de mercado já mudou. É o registro do que se sabia na hora.
+  tese Json?
+
+  status      StatusSinal @default(ABERTO)
+  precoSaida  Decimal?    @db.Decimal(14, 2)
+  resultadoPontos Decimal? @db.Decimal(14, 2)
+  fechadoEm   DateTime?
+
+  criadoEm DateTime @default(now())
+
+  anotacoes AnotacaoSinal[]
+
+  // Idempotência da emissão: o motor pode reprocessar o mesmo candle (restart do
+  // coletor, reprocessamento manual) e não pode nascer sinal duplicado.
+  @@unique([ativo, timeframe, ts, padraoId])
+  @@index([status, ts(sort: Desc)])
+  @@index([ativo, ts(sort: Desc)])
+  @@map("sinais")
+}
+
+/// Detecção de padrão sem decisão de trade — alimenta as marcações do gráfico.
+/// Separada de `Sinal` porque a maioria das detecções nunca vira operação.
+model Deteccao {
+  id         String   @id @default(uuid())
+  ativo      String
+  timeframe  String
+  ts         DateTime
+  padraoId   String
+  padraoNome String
+  direcao    String
+  forca      Decimal  @db.Decimal(5, 4)
+  scoreBruto Decimal  @db.Decimal(5, 4)
+
+  @@unique([ativo, timeframe, ts, padraoId])
+  @@index([ativo, timeframe, ts(sort: Desc)])
+  @@map("deteccoes")
+}
+
+/// Resultado de uma execução de backtest ou walk-forward.
+model ExecucaoBacktest {
+  id          String   @id @default(uuid())
+  ativo       String
+  timeframe   String
+  inicio      DateTime
+  fim         DateTime
+  capital     Decimal  @db.Decimal(14, 2)
+  modo        String   @default("backtest") // backtest | walkforward
+
+  sinaisGerados   Int
+  acionados       Int
+  taxaAcerto      Decimal @db.Decimal(5, 4)
+  expectanciaR    Decimal @db.Decimal(6, 3)
+  resultadoReais  Decimal @db.Decimal(14, 2)
+  rebaixamentoMax Decimal @db.Decimal(14, 2)
+
+  /// Estatística por padrão e por janela do pregão, como o relatório da CLI.
+  porPadrao Json
+  porJanela Json
+
+  criadoEm DateTime @default(now())
+
+  @@index([ativo, criadoEm(sort: Desc)])
+  @@map("execucoes_backtest")
+}
+
+/// Confiabilidade medida por padrão, escrita pelo walk-forward.
+/// É o que substitui o prior do ebook — e só vale com amostra suficiente.
+model CalibracaoPadrao {
+  padraoId    String
+  ativo       String
+  timeframe   String
+  taxaAcerto  Decimal  @db.Decimal(5, 4)
+  expectanciaR Decimal @db.Decimal(6, 3)
+  ocorrencias Int
+  suficiente  Boolean  @default(false)
+  atualizadoEm DateTime @updatedAt
+
+  @@id([padraoId, ativo, timeframe])
+  @@map("calibracoes_padrao")
+}
+
+/// Diário de operações: o que o usuário de fato fez com o sinal.
+/// Sem isto não há como comparar o que o motor sugeriu com o que a conta viveu.
+model AnotacaoSinal {
+  id        String   @id @default(uuid())
+  sinalId   String
+  usuarioId String
+  operou    Boolean  @default(false)
+  texto     String?
+  criadoEm  DateTime @default(now())
+
+  sinal   Sinal   @relation(fields: [sinalId], references: [id], onDelete: Cascade)
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@unique([sinalId, usuarioId])
+  @@map("anotacoes_sinal")
+}

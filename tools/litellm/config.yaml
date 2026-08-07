@@ -1,0 +1,114 @@
+# =============================================================================
+# LiteLLM — gateway de LLM do cronos-trader.
+#
+# Endpoint OpenAI-compatível na :4000 (publicada em :4010) na frente do OpenRouter.
+# Os agentes chamam ESTE proxy, nunca o provedor: trocar de modelo passa a ser editar
+# YAML em vez de mexer em código.
+#
+# **Sem Claude.** Toda a cadeia roda pelo OpenRouter com a chave já configurada. Se um dia
+# a Anthropic voltar, entra como mais um `model_name` aqui — nada no código dos agentes
+# precisa mudar, que é justamente o ponto de existir um gateway.
+#
+# Três camadas de custo, escolhidas por tarefa:
+#
+#   free-*     custo zero, tier :free do OpenRouter — o grosso do trabalho
+#   barato-*   centavos por milhão de tokens — quando o free estoura ou erra
+#   forte-*    raciocínio pesado — só na análise que decide dinheiro
+# =============================================================================
+
+model_list:
+  # ---------------------------------------------------------------------------
+  # GRATUITOS — tier :free do OpenRouter. Custo zero, com limite de requisições.
+  #
+  # Nomes NEUTROS de propósito: os modelos `:free` rotacionam, esgotam capacidade e
+  # às vezes somem. Trocar qual deles está por trás não pode exigir mexer no código
+  # dos agentes.
+  # ---------------------------------------------------------------------------
+  - model_name: free-primary
+    litellm_params:
+      # Llama 3.3 70B: o mais capaz entre os gratuitos estáveis, e responde bem em
+      # pt-BR — que importa aqui, porque toda a saída do produto é em português.
+      model: openrouter/meta-llama/llama-3.3-70b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: free-reserva
+    litellm_params:
+      # Segundo gratuito, de família diferente. Quando o :free principal está em 429,
+      # costuma ser capacidade da infra daquele modelo — trocar para outro da mesma
+      # família cairia no mesmo lugar.
+      model: openrouter/qwen/qwen-2.5-72b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: free-rapido
+    litellm_params:
+      # Modelo pequeno e gratuito para tarefas mecânicas: classificar, extrair campo,
+      # resumir em uma linha. Não vale gastar um 70B nisso.
+      model: openrouter/mistralai/mistral-7b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # ---------------------------------------------------------------------------
+  # BARATOS — centavos por milhão de tokens. Rede de segurança do gratuito.
+  # ---------------------------------------------------------------------------
+  - model_name: barato-primary
+    litellm_params:
+      model: openrouter/openai/gpt-4o-mini
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: barato-reserva
+    litellm_params:
+      model: openrouter/google/gemini-2.0-flash-001
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # ---------------------------------------------------------------------------
+  # FORTES — raciocínio pesado. Só onde a qualidade muda a decisão.
+  #
+  # No cronos-trader isso é UM lugar: o Analista escrevendo a leitura de um sinal que
+  # o usuário vai operar. O Crítico e o Gestor de Risco rodam no gratuito — as tarefas
+  # deles são estruturadas, e estrutura o modelo pequeno faz bem.
+  # ---------------------------------------------------------------------------
+  - model_name: forte-primary
+    litellm_params:
+      model: openrouter/deepseek/deepseek-r1
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: forte-reserva
+    litellm_params:
+      model: openrouter/openai/gpt-4o
+      api_key: os.environ/OPENROUTER_API_KEY
+
+router_settings:
+  # Um retry só: um timeout não deve re-chamar um modelo caro três vezes e queimar
+  # token sem receber resposta.
+  num_retries: 1
+
+  # A cadeia desce de custo zero para pago, nunca o contrário. Um :free em 429 cai
+  # para outro :free de família diferente antes de gastar dinheiro.
+  fallbacks:
+    - free-primary: ['free-reserva', 'barato-primary']
+    - free-reserva: ['barato-primary']
+    - free-rapido: ['free-primary', 'barato-primary']
+    - barato-primary: ['barato-reserva']
+    - forte-primary: ['forte-reserva', 'barato-primary']
+
+  # Roteia por contexto: pedido que não cabe na janela do modelo vai para o próximo
+  # em vez de falhar. O dossiê de um sinal com a kb inteira no system prompt é grande.
+  context_window_fallbacks:
+    - free-primary: ['barato-reserva']
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 600
+
+  success_callback: ['langfuse']
+  failure_callback: ['langfuse']
+
+  # Cache semântico DESLIGADO, e não é por preguiça. Com system prompt grande — e o do
+  # Analista carrega a knowledge base do ebook inteira — o embedding é dominado pelo
+  # prompt, e perguntas diferentes colidem acima do limiar. O agente passa a responder
+  # sempre a mesma coisa, em silêncio. Com o principal custando zero, o cache não
+  # compensa esse risco.
+  cache: false
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false

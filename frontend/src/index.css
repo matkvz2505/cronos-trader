@@ -1,0 +1,239 @@
+@import 'tailwindcss';
+
+/**
+ * Design system do Cronos Trader.
+ *
+ * A tela é um terminal de operação, não um documento: é escaneada em segundos, sob
+ * pressão, com dinheiro em jogo. Três decisões governam tudo:
+ *
+ * 1. **Escuro com profundidade, não chapado.** Superfícies em camadas e um brilho sutil
+ *    atrás do que importa dão hierarquia sem precisar de borda em tudo.
+ * 2. **Saturação é orçamento.** Só direção (alta/baixa) e confiança gastam cor forte. Se
+ *    tudo brilha, nada chama atenção — e o que precisa chamar atenção é o sinal.
+ * 3. **Número é conteúdo.** Preço, score e R:R em fonte tabular, sempre. Sem isso os
+ *    dígitos dançam na vertical a cada atualização e comparar linhas fica desconfortável.
+ *
+ * Alta é ciano-esverdeado e baixa é rosa-avermelhado em vez do verde/vermelho puro:
+ * ~8% dos homens têm deficiência de visão para vermelho-verde, e essa dupla continua
+ * distinguível por matiz E por luminosidade. Direção também sempre aparece escrita.
+ */
+@theme {
+  /* --- superfícies em camadas ------------------------------------------ */
+  --color-fundo: oklch(0.145 0.014 265);
+  --color-superficie: oklch(0.196 0.016 265);
+  --color-superficie-alta: oklch(0.245 0.018 265);
+  --color-superficie-topo: oklch(0.295 0.02 265);
+  --color-borda: oklch(0.305 0.019 265);
+  --color-borda-forte: oklch(0.42 0.024 265);
+
+  /* --- texto ------------------------------------------------------------ */
+  --color-texto: oklch(0.965 0.004 265);
+  --color-texto-suave: oklch(0.755 0.013 265);
+  --color-texto-fraco: oklch(0.585 0.016 265);
+
+  /* --- direção ---------------------------------------------------------- */
+  --color-alta: oklch(0.78 0.155 172);
+  --color-alta-forte: oklch(0.7 0.175 172);
+  --color-alta-fundo: oklch(0.28 0.055 172);
+  --color-baixa: oklch(0.7 0.19 12);
+  --color-baixa-forte: oklch(0.62 0.21 12);
+  --color-baixa-fundo: oklch(0.28 0.07 12);
+
+  /* --- marca ------------------------------------------------------------ */
+  --color-marca: oklch(0.815 0.142 85);
+  --color-marca-forte: oklch(0.735 0.162 85);
+  --color-marca-fundo: oklch(0.29 0.05 85);
+
+  --color-aviso: oklch(0.79 0.145 62);
+  --color-neutro: oklch(0.7 0.055 265);
+
+  /* --- tipografia ------------------------------------------------------- */
+  --font-sans: 'Inter var', ui-sans-serif, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Inter var', ui-sans-serif, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+}
+
+@layer components {
+  /* Cabeçalho de seção. Substitui o componente <Titulo> nas telas novas: menos DOM,
+     mesma hierarquia, e o subtítulo cabe na mesma linha.
+     (`.rotulo` já existe mais abaixo neste arquivo.) */
+  .titulo-secao {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    margin-bottom: 0.75rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--color-texto);
+  }
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-fundo);
+    color: var(--color-texto);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Brilho ambiente no topo — dá profundidade sem custar um elemento no DOM. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0 0 auto 0;
+    height: 420px;
+    background: radial-gradient(
+      70% 100% at 50% 0%,
+      color-mix(in oklch, var(--color-marca) 7%, transparent),
+      transparent 70%
+    );
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .numerico {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.021em;
+    text-wrap: balance;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-borda);
+    border-radius: 5px;
+    border: 2px solid var(--color-fundo);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-borda-forte);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-marca);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+@layer components {
+  .cartao {
+    position: relative;
+    background: linear-gradient(
+      180deg,
+      var(--color-superficie) 0%,
+      color-mix(in oklch, var(--color-superficie) 92%, var(--color-fundo)) 100%
+    );
+    border: 1px solid var(--color-borda);
+    border-radius: 0.875rem;
+    z-index: 1;
+  }
+
+  /* Cartão que precisa ser visto primeiro: aro de marca e brilho de fundo. */
+  .cartao-destaque {
+    border-color: color-mix(in oklch, var(--color-marca) 45%, var(--color-borda));
+    box-shadow:
+      0 0 0 1px color-mix(in oklch, var(--color-marca) 12%, transparent),
+      0 12px 40px -22px color-mix(in oklch, var(--color-marca) 55%, transparent);
+  }
+
+  .campo {
+    width: 100%;
+    background-color: color-mix(in oklch, var(--color-fundo) 70%, var(--color-superficie));
+    border: 1px solid var(--color-borda);
+    border-radius: 0.625rem;
+    padding: 0.65rem 0.9rem;
+    color: var(--color-texto);
+    transition:
+      border-color 160ms,
+      background-color 160ms;
+  }
+  .campo:focus {
+    border-color: var(--color-marca);
+    background-color: var(--color-fundo);
+    outline: none;
+  }
+  .campo::placeholder {
+    color: var(--color-texto-fraco);
+  }
+
+  /* Rótulo de seção. Maiúsculas pedem tracking; sem ele viram um bloco ilegível. */
+  .rotulo {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--color-texto-fraco);
+  }
+
+  .divisor {
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--color-borda) 12%,
+      var(--color-borda) 88%,
+      transparent
+    );
+  }
+}
+
+@layer utilities {
+  .surge {
+    animation: surge 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes surge {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* Pulso do indicador "ao vivo". Discreto de propósito: é status, não alarme. */
+  .pulsa {
+    animation: pulsa 2.4s ease-in-out infinite;
+  }
+
+  @keyframes pulsa {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

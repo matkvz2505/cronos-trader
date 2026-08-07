@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trader-ai"
+version = "0.1.0"
+description = "Motor de padrões de candlestick e sinais para mini-índice (WIN) e mini-dólar (WDO) na B3"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+]
+
+[project.optional-dependencies]
+# Coletor de tempo real. Windows-only e exige o terminal MT5 aberto e logado numa
+# corretora B3 — por isso NÃO entra nas dependências base: o motor, os testes e o
+# backtest precisam rodar em qualquer sistema.
+mt5 = ["MetaTrader5>=5.0.45"]
+
+# Serviço HTTP (:1841) que o backend Node consome, e persistência no Postgres.
+servico = ["fastapi>=0.115", "uvicorn>=0.32", "psycopg[binary]>=3.2"]
+
+# Contexto macro e correlação (S&P, DXY, PTAX). Opcional: o motor funciona sem.
+macro = ["yfinance>=0.2.40", "requests>=2.31"]
+
+# Agentes (Sprint 7) — mesmo padrão de tools/ do cronos-go.
+agentes = ["litellm>=1.44", "langfuse<3", "openai>=1.40", "anthropic>=0.34"]
+
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
+
+[project.scripts]
+trader = "trader_ai.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["trader_ai*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+    # Detectores recebem (janela, ctx, lim) por assinatura fixa do catálogo; nem todo
+    # detector usa os três.
+    "ARG001",
+]

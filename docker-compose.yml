@@ -1,0 +1,230 @@
+# =============================================================================
+# Cronos Trader — stack completa.
+#
+#   docker compose up -d --build
+#
+# Nove serviços numa rede só (`cronos-net`). Uma peça NÃO está aqui e não pode estar:
+# o **coletor MT5**. O pacote `MetaTrader5` é Windows-only e conversa com o terminal
+# por IPC — ele roda no host e escreve no Postgres publicado em :5460.
+#
+#   .\cronos.ps1 coletor
+#
+# Portas deslocadas para conviver com os outros repos do workspace (auth 5430,
+# payments 5440, ecommerce 5434, food 5433, appointment 5432, cronos-go 3000/8081).
+# =============================================================================
+
+name: cronos-trader
+
+x-saude-curto: &saude-curto
+  interval: 10s
+  timeout: 5s
+  retries: 10
+  start_period: 15s
+
+services:
+  # ---------------------------------------------------------------------------
+  # Dados
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: cronos-trader-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: trader
+      POSTGRES_PASSWORD: trader
+      POSTGRES_DB: cronos_trader
+      # Banco em UTC. Guardar candle em horário local traz uma hora duplicada no dia
+      # da virada do horário de verão — e o gráfico fica com dois candles no mesmo ts.
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - '5460:5432'
+    volumes:
+      - trader_pg:/var/lib/postgresql/data
+    networks: [cronos-net]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U trader -d cronos_trader']
+      <<: *saude-curto
+
+  redis:
+    image: redis:7-alpine
+    container_name: cronos-trader-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - '6400:6379'
+    volumes:
+      - trader_redis:/data
+    networks: [cronos-net]
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      <<: *saude-curto
+
+  adminer:
+    image: adminer:4
+    container_name: cronos-trader-adminer
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports:
+      - '5461:8080'
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DEFAULT_DB_NAME: cronos_trader
+    networks: [cronos-net]
+
+  # ---------------------------------------------------------------------------
+  # Migrations — one-shot, roda antes do backend e sai.
+  # Usa o estágio `build` do backend porque o Prisma CLI e o tsx são devDependencies:
+  # a imagem de runtime não os tem, de propósito.
+  # ---------------------------------------------------------------------------
+  migrate:
+    build:
+      context: ./backend
+      target: build
+    container_name: cronos-trader-migrate
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://trader:trader@postgres:5432/cronos_trader?schema=public
+    command: >
+      sh -c "npx prisma migrate deploy && npx tsx prisma/seed.ts"
+    networks: [cronos-net]
+    restart: 'no'
+
+  # ---------------------------------------------------------------------------
+  # Motor de padrões (Python)
+  # ---------------------------------------------------------------------------
+  motor:
+    build: ./ai
+    container_name: cronos-trader-motor
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    environment:
+      DATABASE_URL: postgresql://trader:trader@postgres:5432/cronos_trader
+      PORTA_IA: 1841
+      EM_CONTAINER: 1
+    ports:
+      - '1841:1841'
+    networks: [cronos-net]
+
+  # ---------------------------------------------------------------------------
+  # API
+  # ---------------------------------------------------------------------------
+  backend:
+    build: ./backend
+    container_name: cronos-trader-backend
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+      motor: { condition: service_started }
+    environment:
+      NODE_ENV: production
+      PORT: 1840
+      DATABASE_URL: postgresql://trader:trader@postgres:5432/cronos_trader?schema=public
+      # Sobrescreva no .env da raiz. O boot falha se tiver menos de 32 caracteres.
+      JWT_SECRET: ${JWT_SECRET:-troque-este-valor-de-desenvolvimento-por-um-segredo-real-de-64-chars}
+      JWT_EXPIRA_EM: 15m
+      REFRESH_EXPIRA_DIAS: 30
+      IA_URL: http://motor:1841
+      IA_TIMEOUT_MS: 300000
+      # O navegador fala com o nginx do frontend, que faz proxy — a origem que chega
+      # aqui é a do frontend.
+      CORS_ORIGENS: http://localhost:5180
+      LOG_NIVEL: info
+      WS_INTERVALO_MS: 5000
+    ports:
+      - '1840:1840'
+    networks: [cronos-net]
+
+  # ---------------------------------------------------------------------------
+  # Tela
+  # ---------------------------------------------------------------------------
+  frontend:
+    build: ./frontend
+    container_name: cronos-trader-frontend
+    restart: unless-stopped
+    depends_on:
+      backend: { condition: service_started }
+    ports:
+      - '5180:80'
+    networks: [cronos-net]
+
+  # ---------------------------------------------------------------------------
+  # Tools — gateway de LLM e observabilidade (agentes, Sprint 7)
+  # ---------------------------------------------------------------------------
+  langfuse-db:
+    image: postgres:16-alpine
+    container_name: cronos-trader-langfuse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_pg:/var/lib/postgresql/data
+    networks: [cronos-net]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U langfuse -d langfuse']
+      <<: *saude-curto
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: cronos-trader-langfuse
+    restart: unless-stopped
+    depends_on:
+      langfuse-db: { condition: service_healthy }
+    ports:
+      - '3010:3000'
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3010
+      NEXTAUTH_SECRET: cronos-trader-dev-nextauth-secret
+      SALT: cronos-trader-dev-salt
+      TELEMETRY_ENABLED: 'false'
+      # Preseed: org, projeto, usuário e chaves de API já criados no primeiro boot.
+      # Sem isto seria preciso abrir a UI e copiar chaves à mão antes de qualquer
+      # agente conseguir logar um trace.
+      LANGFUSE_INIT_ORG_ID: cronos
+      LANGFUSE_INIT_ORG_NAME: Cronos
+      LANGFUSE_INIT_PROJECT_ID: cronos-trader
+      LANGFUSE_INIT_PROJECT_NAME: Cronos Trader
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-cronos-trader-dev
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-cronos-trader-dev
+      LANGFUSE_INIT_USER_EMAIL: admin@cronos.trader
+      LANGFUSE_INIT_USER_NAME: Cronos Admin
+      LANGFUSE_INIT_USER_PASSWORD: cronos-dev-123
+    networks: [cronos-net]
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: cronos-trader-litellm
+    restart: unless-stopped
+    depends_on:
+      langfuse: { condition: service_started }
+    ports:
+      - '4010:4000'
+    volumes:
+      - ./tools/litellm/config.yaml:/app/config.yaml:ro
+    command: ['--config', '/app/config.yaml', '--port', '4000']
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-cronos-trader-dev}
+      # Toda a cadeia roda pelo OpenRouter — free, barato e forte. Sem Claude.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LANGFUSE_HOST: http://langfuse:3000
+      LANGFUSE_PUBLIC_KEY: pk-lf-cronos-trader-dev
+      LANGFUSE_SECRET_KEY: sk-lf-cronos-trader-dev
+    networks: [cronos-net]
+
+volumes:
+  trader_pg:
+  trader_redis:
+  langfuse_pg:
+
+networks:
+  cronos-net:
+    name: cronos-net
+    driver: bridge
