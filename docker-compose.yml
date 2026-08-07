@@ -15,6 +15,26 @@
 
 name: cronos-trader
 
+# -----------------------------------------------------------------------------
+# O relógio de TODA a stack é o da B3. Isto não é preferência regional.
+#
+# O `ts` de um candle não é um instante absoluto: é o relógio de parede do pregão,
+# gravado em `timestamp without time zone`. Um container em UTC calcula
+# `now() - candle.ts` com dois relógios diferentes e erra por 3 horas — foi assim que
+# a tela ao vivo passou a anunciar "dados parados há 6 h" com candle de 3h20, e que a
+# janela do pregão passou a ser avaliada com o horário errado.
+#
+# O argumento antigo para UTC era a hora duplicada na virada do horário de verão. Ele
+# não se aplica: **o Brasil não tem horário de verão desde 2019**, e o offset é −3 fixo.
+# Se algum dia voltar, a resposta certa é gravar o candle com fuso explícito — não
+# desalinhar os relógios de novo.
+#
+# O coletor roda no host, que já está em horário de Brasília. Alinhar os containers é o
+# que faz host e stack concordarem.
+# -----------------------------------------------------------------------------
+x-fuso: &fuso
+  TZ: America/Sao_Paulo
+
 x-saude-curto: &saude-curto
   interval: 10s
   timeout: 5s
@@ -33,10 +53,9 @@ services:
       POSTGRES_USER: trader
       POSTGRES_PASSWORD: trader
       POSTGRES_DB: cronos_trader
-      # Banco em UTC. Guardar candle em horário local traz uma hora duplicada no dia
-      # da virada do horário de verão — e o gráfico fica com dois candles no mesmo ts.
-      TZ: UTC
-      PGTZ: UTC
+      # A stack inteira roda no relógio da B3. Ver o bloco `x-fuso` no topo do arquivo.
+      TZ: America/Sao_Paulo
+      PGTZ: America/Sao_Paulo
     ports:
       - '5460:5432'
     volumes:
@@ -89,6 +108,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     environment:
+      <<: *fuso
       DATABASE_URL: postgresql://trader:trader@postgres:5432/cronos_trader?schema=public
     command: >
       sh -c "npx prisma migrate deploy && npx tsx prisma/seed.ts"
@@ -106,6 +126,7 @@ services:
       postgres: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
     environment:
+      <<: *fuso
       DATABASE_URL: postgresql://trader:trader@postgres:5432/cronos_trader
       PORTA_IA: 1841
       EM_CONTAINER: 1
@@ -125,6 +146,7 @@ services:
       migrate: { condition: service_completed_successfully }
       motor: { condition: service_started }
     environment:
+      <<: *fuso
       NODE_ENV: production
       PORT: 1840
       DATABASE_URL: postgresql://trader:trader@postgres:5432/cronos_trader?schema=public

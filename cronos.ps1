@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Orquestrador do cronos-trader.
 
@@ -54,7 +54,10 @@ function ExigirDocker {
     }
 }
 
-function Compose { param([string[]]$Args) Push-Location $Raiz; try { docker compose @Args } finally { Pop-Location } }
+# O parâmetro NÃO pode se chamar $Args: é variável automática do PowerShell, e declará-la
+# em `param()` faz o splat `@Args` expandir para vazio — o `docker compose` roda sem
+# comando algum e só imprime o help, sem erro nenhum que denuncie a causa.
+function Compose { param([string[]]$Argumentos) Push-Location $Raiz; try { docker compose @Argumentos } finally { Pop-Location } }
 
 function TestarPorta($Porta) {
     return Test-NetConnection -ComputerName localhost -Port $Porta -InformationLevel Quiet -WarningAction SilentlyContinue
@@ -181,16 +184,35 @@ switch ($Comando) {
                     Escrever ("  {0} {1,-5} {2,8} candles   último {3}" -f $c.ativo, $c.timeframe, $c.total, $c.ultimo)
                 }
             } else {
-                Escrever '  nenhum candle — rode .\cronos.ps1 amostra ou .\cronos.ps1 coletor' 'Yellow'
+                Escrever '  nenhum candle ainda' 'Yellow'
             }
         } catch { Escrever '  backend fora do ar' 'DarkGray' }
 
-        Titulo 'MetaTrader 5 (host)'
-        if (Get-Process terminal64 -ErrorAction SilentlyContinue) {
-            Escrever '  terminal aberto — confirme login com .\cronos.ps1 diagnostico' 'Green'
+        # A coleta é automática. Esta seção existe para RESPONDER "por que não está
+        # entrando dado", não para mandar o operador rodar comando: as duas causas reais
+        # são terminal MT5 fechado e tarefa não registrada, e ambas aparecem aqui.
+        Titulo 'Coleta (host)'
+        $terminal = [bool](Get-Process terminal64 -ErrorAction SilentlyContinue)
+        Escrever ("  terminal MT5 ... {0}" -f $(if ($terminal) { 'aberto' } else { 'FECHADO — abra e faça login numa corretora B3' })) `
+                 $(if ($terminal) { 'Green' } else { 'Yellow' })
+
+        $tarefa = Get-ScheduledTask -TaskName 'CronosTrader-Coletor' -ErrorAction SilentlyContinue
+        if (-not $tarefa) {
+            Escrever '  coletor ....... NÃO REGISTRADO — rode .\cronos.ps1 instalar-coletor (uma vez só)' 'Yellow'
         } else {
-            Escrever '  terminal fechado. O coletor precisa dele aberto e logado.' 'Yellow'
+            $info = Get-ScheduledTaskInfo -TaskName 'CronosTrader-Coletor'
+            $rodando = $tarefa.State -eq 'Running'
+            Escrever ("  coletor ....... {0}" -f $(if ($rodando) { 'rodando' } else { "parado (último resultado $($info.LastTaskResult))" })) `
+                     $(if ($rodando) { 'Green' } else { 'Yellow' })
+            Escrever ("  última coleta . {0}" -f $info.LastRunTime) 'DarkGray'
         }
+
+        # O pregão é a outra explicação legítima para "sem dado novo", e é a mais comum.
+        $agora = Get-Date
+        $util = $agora.DayOfWeek -notin @('Saturday', 'Sunday')
+        $aberto = $util -and $agora.TimeOfDay -ge [TimeSpan]'09:00' -and $agora.TimeOfDay -lt [TimeSpan]'18:00'
+        Escrever ("  pregão ........ {0} ({1:HH:mm})" -f $(if ($aberto) { 'ABERTO' } else { 'fechado' }), $agora) `
+                 $(if ($aberto) { 'Green' } else { 'DarkGray' })
     }
 
     'amostra' {

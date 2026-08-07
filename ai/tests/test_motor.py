@@ -48,7 +48,7 @@ def _serie(linhas, ativo="WIN", tf=Timeframe.M5, inicio=TS) -> Serie:
     return Serie(ativo, tf, candles)
 
 
-def _ctx(tendencia=Tendencia.BAIXA, janela="tendencia-manha", peso=1.15) -> Contexto:
+def _ctx(tendencia=Tendencia.BAIXA, janela="manha", peso=1.15) -> Contexto:
     return Contexto(tendencia, 0.8, ATR, 1.0, janela, peso, 50)
 
 
@@ -263,7 +263,7 @@ def test_proximo_obstaculo_ignora_zona_colada_no_preco():
 def test_horario_de_almoco_derruba_o_score():
     serie = _serie_com_perna_de_alta()
     d = _deteccao()
-    bom = confluencia.avaliar(serie, len(serie) - 1, d, _ctx(janela="tendencia-manha", peso=1.15))
+    bom = confluencia.avaliar(serie, len(serie) - 1, d, _ctx(janela="manha", peso=1.15))
     ruim = confluencia.avaliar(serie, len(serie) - 1, d, _ctx(janela="almoco", peso=0.60))
     assert ruim.score_sem_teto < bom.score_sem_teto
 

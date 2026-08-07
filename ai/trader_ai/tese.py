@@ -28,11 +28,14 @@ from .instrumentos import resolver
 from .padroes import CATALOGO
 from .tipos import Contexto, Direcao
 
+# Só a hora e o que é observável nela. Nada de causa atribuída: "abertura americana"
+# afirmava um porquê que a medição não sustenta — e ainda estava na hora errada, porque a
+# bolsa dos EUA abre 10h30 de Brasília, não 14h. Ver `contexto.JANELAS_B3`.
 JANELAS_LEGIVEIS = {
     "abertura": "abertura do pregão (9h–10h), volátil e ruidosa",
-    "tendencia-manha": "manhã (10h–12h)",
+    "manha": "manhã (10h–12h)",
     "almoco": "meio-dia (12h–14h), liquidez baixa",
-    "abertura-eua": "abertura americana (14h–16h)",
+    "tarde": "tarde (14h–16h)",
     "fechamento": "reta final (16h–17h30)",
     "ajuste": "ajuste (após 17h30)",
     "pre-abertura": "pré-abertura",

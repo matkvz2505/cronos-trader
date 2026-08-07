@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Registra o coletor MT5 como tarefa automática do Windows.
 

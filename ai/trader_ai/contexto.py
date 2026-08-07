@@ -44,21 +44,27 @@ class JanelaPregao:
 JANELAS_B3 = (
     JanelaPregao("pre-abertura", time(0, 0), time(9, 0), 0.0, opera=False),
     JanelaPregao("abertura", time(9, 0), time(10, 0), 0.85),
-    JanelaPregao("tendencia-manha", time(10, 0), time(12, 0), 1.15),
+    JanelaPregao("manha", time(10, 0), time(12, 0), 1.15),
     JanelaPregao("almoco", time(12, 0), time(14, 0), 0.60),
-    JanelaPregao("abertura-eua", time(14, 0), time(16, 0), 1.15),
+    JanelaPregao("tarde", time(14, 0), time(16, 0), 1.15),
     JanelaPregao("fechamento", time(16, 0), time(17, 30), 1.00),
     JanelaPregao("ajuste", time(17, 30), time(23, 59, 59), 0.0, opera=False),
 )
 """Janelas do pregão em horário de Brasília, com o peso de confluência de cada uma.
 
-Os pesos vêm da observação de que WIN/WDO mudam de caráter ao longo do dia: a abertura é
-volátil e ruidosa (padrão precisa ser mais forte para valer), o meio-dia lateraliza com
-liquidez baixa (penalidade forte), e a abertura americana traz direção.
+**Os pesos abaixo estão pendentes de remedição e não devem ser tratados como evidência.**
+Eles foram calibrados sobre uma base que estava 3 horas deslocada (ver
+`fontes/mt5.py:hora_do_servidor`), então cada peso está preso à janela errada. A medição
+anterior atribuía +0,40R à faixa que ela chamava de "abertura americana"; com o
+deslocamento desfeito, aquelas operações eram na verdade das 17h às 18h25 — o fechamento.
 
-São o **ponto de partida**, não verdade medida. O backtest da Sprint 4 recalcula o acerto
-real por janela e substitui estes números. Horário de verão americano desloca a janela
-`abertura-eua` em uma hora — por isso as janelas são dado, não `if` no meio do código.
+Os rótulos eram geográficos e agora são horários, de propósito. `abertura-eua` era
+factualmente errado em 14h–16h: a bolsa americana abre 9h30 ET, o que dá **10h30 de
+Brasília** no horário de verão de lá e 11h30 fora dele — dentro de `manha`, não de
+`tarde`. Um nome que afirma causa ("é a abertura americana que traz direção") convida a
+raciocinar por cima de uma premissa não medida; um nome que só diz a hora, não.
+
+Continuam sendo dado e não `if` no meio do código para que o backtest possa substituí-los.
 """
 
 

@@ -183,6 +183,68 @@ Duas armadilhas na instalação, ambas já resolvidas e fáceis de reintroduzir:
   gera um `.bat`. E o `-u` do Python é obrigatório: sem ele a saída redirecionada fica
   buferizada e o log some justamente quando é preciso.
 
+## Tudo roda no relógio da B3 — host, containers e banco
+
+O `ts` de um candle **não é um instante absoluto**: é o relógio de parede do pregão,
+gravado em `timestamp without time zone`. Isso obriga três coisas a concordarem, e cada
+uma já quebrou uma vez:
+
+1. **O adapter do MT5.** O campo `time` é o relógio do servidor codificado *como se fosse*
+   UTC. `datetime.fromtimestamp()` aplica o fuso da máquina por cima e enterra o candle 3
+   horas no passado. Use `hora_do_servidor()` em `fontes/mt5.py`. Coberto por
+   `tests/test_fonte_mt5.py`.
+2. **Os containers.** `TZ: America/Sao_Paulo` via a âncora `x-fuso` do compose. Container
+   em UTC calcula `now() - candle.ts` com dois relógios e a tela anuncia "dados parados há
+   6 h" com candle de 3h20.
+3. **A tela.** O Prisma serializa o timestamp naive como se fosse UTC — o candle das 15:30
+   chega ao navegador como `...T15:30:00.000Z`. O `Z` mente. Formate com
+   `timeZone: 'UTC'` (`frontend/src/lib/formato.ts`), que devolve o relógio do pregão.
+
+**A checagem de 10 segundos, com o pregão aberto:** o último candle de M5 tem que estar a
+menos de 5 minutos de agora. `.\cronos.ps1 status` mostra isso. Se der ~180 minutos, é o
+item 1; se der ~360, é o item 1 somado ao 2.
+
+O sintoma é traiçoeiro porque 09:00–18:25 deslocado vira 06:00–15:25, que ainda parece
+pregão para quem olha de relance. Custou a base histórica inteira e a rotulagem de todo
+estudo por janela — ver [docs/ESTUDOS.md](docs/ESTUDOS.md) seção 3.
+
+> O Brasil não tem horário de verão desde 2019, então o offset é −3 fixo. Se voltar, a
+> resposta certa é gravar o candle com fuso explícito, não desalinhar os relógios de novo.
+
+## Os `.ps1` precisam de BOM UTF-8 — e sua ferramenta de edição o remove
+
+**Todo `.ps1` deste repo tem que ser gravado em UTF-8 COM BOM.** Não é preferência de
+estilo, é o que decide se o script roda.
+
+O PowerShell 5.1 (que é o que está nesta máquina) assume **CP1252** para arquivo sem BOM.
+Aí cada travessão `—` (UTF-8 `E2 80 94`) é lido como três caracteres — e o terceiro,
+`0x94`, é `”` **U+201D**. O PowerShell aceita aspa curva como delimitador de string.
+Dez travessões viram dez aspas fantasmas, o pareamento desloca, e o erro aparece **em
+outro lugar**: o `cronos.ps1` acusou erro na linha 228, num bloco de sintaxe perfeita, por
+causa de um travessão na linha 6.
+
+O sintoma é traiçoeiro porque o arquivo parece certo em qualquer editor e o `git diff` sai
+limpo. Para confirmar em vez de adivinhar:
+
+```powershell
+$e = $null; $t = $null
+[System.Management.Automation.Language.Parser]::ParseFile($caminho, [ref]$t, [ref]$e) | Out-Null
+$e | Select-Object -First 3
+```
+
+**Depois de qualquer edição num `.ps1`, recoloque o BOM.** As ferramentas de edição do
+Claude Code gravam UTF-8 sem BOM, então isto reincide a cada mexida:
+
+```powershell
+$b = [System.IO.File]::ReadAllBytes($p)
+if (-not ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)) {
+    [System.IO.File]::WriteAllBytes($p, ([byte[]](0xEF,0xBB,0xBF) + $b))
+}
+```
+
+A alternativa — escrever os scripts em ASCII puro — foi descartada: a copy é em pt-BR, e
+trocar por copy sem acento resolveria o parser piorando o produto.
+
 ## Docker — o que costuma morder
 
 - **`NODE_ENV=production` no container + `JWT_SECRET` de exemplo = boot recusado.** É o
@@ -190,6 +252,11 @@ Duas armadilhas na instalação, ambas já resolvidas e fáceis de reintroduzir:
   no primeiro boot. Nunca troque isso por afrouxar a checagem.
 - **`RandomNumberGenerator::Fill` não existe no PowerShell 5.1.** Ele falha em silêncio,
   o array fica zerado, e o "segredo" sai todo de zeros. Use `Create()` + `GetBytes()`.
+- **Nunca chame de `$Args` um parâmetro de função no PowerShell.** É variável automática:
+  declarar `param([string[]]$Args)` faz o splat `@Args` expandir para **vazio**. A função
+  `Compose` do `cronos.ps1` caiu nisso e rodava `docker compose` sem comando nenhum — o
+  Docker imprimia o help, saía com sucesso, e o `up` seguia esperando serviço que ninguém
+  tinha mandado subir. O parâmetro se chama `$Argumentos`.
 - **Prisma em Debian slim, não Alpine.** A combinação musl + OpenSSL é a fonte clássica de
   `Query engine binary not found`. `binaryTargets` declara `native` e `debian-openssl-3.0.x`.
 - **O `migrate` é one-shot** e usa o estágio `build` do backend: o Prisma CLI e o `tsx` são

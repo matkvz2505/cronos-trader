@@ -26,7 +26,7 @@ def _ctx(volatilidade: float = 1.0) -> Contexto:
         forca_tendencia=0.8,
         atr=100.0,
         regime_volatilidade=volatilidade,
-        janela_pregao="abertura-eua",
+        janela_pregao="tarde",
         peso_horario=1.15,
         indice=50,
     )
@@ -155,7 +155,9 @@ def test_invalidacao_nao_embaralha_a_pontuacao_da_frase():
 def test_quando_traz_horario_e_janela_legivel():
     t = tese_mod.montar(_sinal(), _ctx())
     assert "05/08 às 15:15" in t.quando
-    assert "abertura americana" in t.quando
+    # Só a hora: o rótulo não afirma causa, e "abertura americana" além de não medida
+    # estava na hora errada — a bolsa dos EUA abre 10h30 de Brasília.
+    assert "tarde (14h–16h)" in t.quando
 
 
 def test_porque_explica_o_padrao_em_portugues():

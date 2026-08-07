@@ -125,9 +125,9 @@ def test_atr_e_positivo_apos_o_aquecimento():
     [
         (time(8, 30), "pre-abertura"),
         (time(9, 30), "abertura"),
-        (time(10, 30), "tendencia-manha"),
+        (time(10, 30), "manha"),
         (time(12, 30), "almoco"),
-        (time(15, 0), "abertura-eua"),
+        (time(15, 0), "tarde"),
         (time(16, 30), "fechamento"),
         (time(18, 0), "ajuste"),
     ],

@@ -18,7 +18,7 @@ não quebra — só falha ao usar.
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 
 from ..tipos import Candle, Serie, Timeframe
 from .base import FonteIndisponivel
@@ -97,6 +97,29 @@ def _timeframe_mt5(tf: Timeframe):
     return mapa[tf]
 
 
+def hora_do_servidor(epoch: int) -> datetime:
+    """Converte o campo `time` do MT5 no relógio do servidor da corretora.
+
+    **Tem que ser `UTC`, e isso não é detalhe.** O MT5 não entrega um instante absoluto:
+    ele pega o relógio de parede do servidor e o codifica *como se fosse* UTC. Ler esse
+    número com `datetime.fromtimestamp()` aplica o fuso da máquina por cima — e no Brasil
+    (UTC−3) isso enterra todo candle 3 horas no passado.
+
+    O erro é silencioso da pior forma possível, porque o resultado continua parecendo um
+    pregão: 09:00–18:25 vira 06:00–15:25, que é horário plausível para quem olha de
+    relance. Custou uma base inteira deslocada — inclusive os CSVs exportados por este
+    mesmo caminho — e, com ela, a rotulagem errada de todo estudo por janela do pregão.
+
+    Como conferir em 10 segundos, com o pregão aberto: o último candle de M5 tem que ficar
+    a menos de 5 minutos de `datetime.now()`. Se der ~180 minutos, é este bug de volta.
+
+    A corretora B3 roda o servidor no horário de Brasília, então o relógio do servidor já
+    é o horário local — e o Brasil não tem mais horário de verão desde 2019, o que faz o
+    deslocamento ser constante e não sazonal.
+    """
+    return datetime.fromtimestamp(epoch, UTC).replace(tzinfo=None)
+
+
 def _converter(barras) -> list[Candle]:
     """Converte o array estruturado do MT5 em `Candle`.
 
@@ -106,7 +129,7 @@ def _converter(barras) -> list[Candle]:
     """
     return [
         Candle(
-            ts=datetime.fromtimestamp(int(b["time"])),
+            ts=hora_do_servidor(int(b["time"])),
             abertura=float(b["open"]),
             maxima=float(b["high"]),
             minima=float(b["low"]),

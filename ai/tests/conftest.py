@@ -102,7 +102,7 @@ def _ctx(tendencia: Tendencia) -> Contexto:
         forca_tendencia=0.8,
         atr=ATR,
         regime_volatilidade=1.0,
-        janela_pregao="tendencia-manha",
+        janela_pregao="manha",
         peso_horario=1.15,
         indice=50,
     )

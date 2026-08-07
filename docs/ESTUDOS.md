@@ -114,23 +114,43 @@ rende ao menos `rr_minimo`; se nenhuma serve, projeção de Fibonacci; por últi
 
 ---
 
-## 3. Janelas do pregão — o prior que a medição contradiz
+## 3. Janelas do pregão — INVALIDADO em 07/08/2026, aguardando remedição
 
-Medido em WIN, 60.000 candles:
+> ⚠️ **Os números desta seção estão presos ao horário errado. Não use para decidir nada.**
+>
+> Em 07/08/2026 descobriu-se que toda a base histórica estava **3 horas no passado**: o
+> adapter do MT5 convertia o campo `time` com `datetime.fromtimestamp()`, aplicando o fuso
+> da máquina sobre um valor que já era relógio do servidor. Detalhe em
+> `ai/trader_ai/fontes/mt5.py:hora_do_servidor`.
+>
+> As operações medidas são reais e os agrupamentos, internamente consistentes. O que está
+> errado é **a que hora do dia cada grupo corresponde** — some 3 horas em cada faixa abaixo
+> para saber quando aquelas operações de fato aconteceram.
+>
+> A base foi reconstruída a partir dos CSVs corrigidos. **Falta rodar o estudo de novo.**
 
-| Janela | n | Expectância | Resultado | Peso que eu dei |
+Medido em WIN, 60.000 candles — com os rótulos como estavam na época:
+
+| Janela como rotulada | n | Expectância | Resultado | Hora real dos trades |
 |---|---|---|---|---|
-| **abertura-eua** (14h–16h) | 115 | **+0,40R** | +R$ 5.905 | 1,15 |
-| abertura (9h–10h) | 41 | +0,22R | +R$ 918 | 0,85 |
-| almoço (12h–14h) | 55 | +0,01R | −R$ 500 | 0,60 |
-| **tendência-manhã** (10h–12h) | 205 | **−0,28R** | **−R$ 11.948** | **1,15** |
+| **abertura-eua** (14h–16h) | 115 | **+0,40R** | +R$ 5.905 | **17h–18h25**, o fechamento |
+| abertura (9h–10h) | 41 | +0,22R | +R$ 918 | 12h–13h |
+| almoço (12h–14h) | 55 | +0,01R | −R$ 500 | 15h–17h |
+| **tendência-manhã** (10h–12h) | 205 | **−0,28R** | **−R$ 11.948** | **13h–15h** |
 
-Eu dei peso máximo à janela das 10h–12h supondo ser a de "tendência mais limpa". É a que
-mais destrói capital na série inteira, e por larga margem.
+O achado que sobrevive à correção é o **sinal**, não o rótulo: existe uma faixa do dia que
+destrói capital com amostra grande (n=205) e outra que rende. O que caiu foi a explicação.
+"A abertura americana traz direção" era narrativa sobre uma janela que nem era a abertura
+americana — a bolsa dos EUA abre **10h30 de Brasília**, não 14h. E a faixa que eu chamava
+de "tendência limpa da manhã" era, de fato, o meio da tarde.
 
-**Não recalibrei os pesos.** Ajustá-los nesta mesma série e depois reportar melhora nela
-é exatamente a memorização contra a qual o walk-forward existe. Recalibrar exige treinar
-numa janela e medir na seguinte — trabalho pendente, e o produto avisa isso na tela.
+É o custo exato de nomear uma janela pela causa que se imagina em vez da hora que ela é.
+Os rótulos no código agora são `manha` / `tarde` / `fechamento`, sem causa embutida.
+
+**Os pesos nunca foram recalibrados** — e agora há uma segunda razão para não recalibrar
+às pressas. Ajustá-los na mesma série em que foram descobertos é a memorização contra a
+qual o walk-forward existe; fazê-lo sobre rótulos que acabaram de mudar de significado
+seria pior. Recalibrar exige treinar numa janela e medir na seguinte.
 
 ---
 

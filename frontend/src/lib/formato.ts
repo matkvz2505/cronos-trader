@@ -42,8 +42,29 @@ export function pontos(valor: number | null | undefined): string {
   return valor.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
 }
 
+/**
+ * Fuso em que os instantes vindos da API devem ser LIDOS.
+ *
+ * O `ts` de um candle é relógio de parede do pregão, guardado em `timestamp without time
+ * zone`. O Prisma serializa esse valor naive como se fosse UTC — o candle das 15:30 da B3
+ * chega aqui como `2026-08-07T15:30:00.000Z`. O `Z` está mentindo: não é 15:30 UTC, é
+ * 15:30 em São Paulo.
+ *
+ * Renderizar isso com o fuso do navegador subtrai 3 horas e o gráfico marca 12:30 num
+ * candle das 15:30. Ler os componentes em UTC devolve exatamente o número que o operador
+ * vê no MetaTrader.
+ *
+ * A alternativa — migrar a coluna para `timestamptz` — foi descartada por ora: obrigaria
+ * migração de dados e o motor em Python trata `ts` como naive em toda a pipeline.
+ */
+const FUSO_DO_MERCADO = 'UTC';
+
 export function horario(iso: string): string {
-  return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleTimeString('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: FUSO_DO_MERCADO,
+  });
 }
 
 export function dataHora(iso: string): string {
@@ -52,11 +73,23 @@ export function dataHora(iso: string): string {
     month: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: FUSO_DO_MERCADO,
   });
 }
 
+/**
+ * Idade de um instante DO MERCADO.
+ *
+ * Não dá para comparar direto com `Date.now()`: o instante da API carrega o relógio do
+ * pregão rotulado como UTC, e o navegador está em −3. A subtração crua daria 3 horas a
+ * mais — foi exatamente o que fez a tela anunciar "dados parados há 6 h" com candle de
+ * pouco mais de 3 h. Corrige-se comparando com o agora convertido para o mesmo rótulo.
+ */
 export function haQuantoTempo(iso: string): string {
-  const segundos = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  const agora = new Date();
+  const agoraNoRotuloDoMercado =
+    agora.getTime() - agora.getTimezoneOffset() * 60_000;
+  const segundos = Math.floor((agoraNoRotuloDoMercado - new Date(iso).getTime()) / 1000);
   if (segundos < 60) return 'agora';
   if (segundos < 3600) return `há ${Math.floor(segundos / 60)}min`;
   if (segundos < 86400) return `há ${Math.floor(segundos / 3600)}h`;
