@@ -4,13 +4,29 @@ import { useParams } from 'react-router-dom';
 import { CartaoSinal } from '../components/CartaoSinal';
 import { Alerta, Carregando } from '../components/ui';
 import { api } from '../lib/api';
-import { preco } from '../lib/formato';
+import { dataHora, preco } from '../lib/formato';
 import { idadeDe, useRelogio } from '../lib/useRelogio';
 import { useSinaisAoVivo } from '../lib/useSinaisAoVivo';
-import type { Ativo, Conta, LeituraTimeframe, Raciocinio, Sinal, Vigilancia } from '../lib/tipos';
+import type {
+  Ativo,
+  Conta,
+  LeituraTimeframe,
+  Raciocinio,
+  Sinal,
+  TickMercado,
+  Vigilancia,
+} from '../lib/tipos';
 
 const NOME: Record<Ativo, string> = { WIN: 'Mini-índice', WDO: 'Mini-dólar' };
-const INTERVALO_MS = 20_000;
+
+/**
+ * Rede de segurança para quando o WebSocket não estiver entregando.
+ *
+ * Longo de propósito: com o push funcionando o dossiê é recarregado quando o candle vira,
+ * e este timer nunca traz novidade. Ele existe só para a tela não congelar se a conexão
+ * cair sem reconectar.
+ */
+const INTERVALO_MS = 60_000;
 
 /**
  * Sala de Operações — uma por ativo.
@@ -35,8 +51,9 @@ export function Sala() {
   const [ultimaAtualizacao, setUltimaAtualizacao] = useState<Date | null>(null);
   const primeiraCarga = useRef(true);
 
-  const { abertos } = useSinaisAoVivo();
+  const { abertos, ticks } = useSinaisAoVivo();
   const sinaisDoAtivo = abertos.filter((s) => s.ativo === ativo);
+  const tick = ticks[ativo];
 
   const carregar = useCallback(async () => {
     setAtualizando(true);
@@ -56,7 +73,31 @@ export function Sala() {
   useEffect(() => {
     primeiraCarga.current = true;
     setRaciocinio(null);
+  }, [ativo]);
+
+  /**
+   * Recarrega o dossiê quando o candle vira — não a cada N segundos.
+   *
+   * `tick.ts` só muda quando o motor tem algo novo para dizer: o dossiê é derivado do
+   * último candle fechado, então recalculá-lo antes disso devolve exatamente a mesma
+   * resposta. O preço e a idade que correm no cabeçalho vêm do tick, que o servidor
+   * empurra a cada ciclo — é ali que a tela fica viva, e não num `setInterval` que
+   * atropela o motor com o mesmo pedido.
+   *
+   * `tick.ts` é `undefined` até o WebSocket entregar o primeiro estado; a primeira carga
+   * acontece nesse momento, ou pelo fallback abaixo se a conexão não subir.
+   */
+  useEffect(() => {
     void carregar();
+  }, [carregar, tick?.ts]);
+
+  /**
+   * Rede de segurança para WebSocket fora do ar.
+   *
+   * Intervalo folgado de propósito: com o push funcionando isto nunca traz novidade, e
+   * existe só para a tela não congelar caso a conexão caia sem reconectar.
+   */
+  useEffect(() => {
     const timer = window.setInterval(() => void carregar(), INTERVALO_MS);
     return () => window.clearInterval(timer);
   }, [carregar]);
@@ -70,6 +111,7 @@ export function Sala() {
       <Cabecalho
         ativo={ativo}
         raciocinio={raciocinio}
+        tick={tick}
         atualizando={atualizando}
         ultimaAtualizacao={ultimaAtualizacao}
       />
@@ -114,17 +156,34 @@ export function Sala() {
 function Cabecalho({
   ativo,
   raciocinio,
+  tick,
   atualizando,
   ultimaAtualizacao,
 }: {
   ativo: Ativo;
   raciocinio: Raciocinio | null;
+  tick: TickMercado | undefined;
   atualizando: boolean;
   ultimaAtualizacao: Date | null;
 }) {
   const agora = useRelogio();
-  const subiu = (raciocinio?.variacaoDia ?? 0) >= 0;
-  const frescos = raciocinio?.dadosFrescos ?? false;
+
+  /**
+   * Preço e variação saem do TICK, não do dossiê.
+   *
+   * O dossiê é recalculado só quando o candle vira — a cada 5 minutos. Se o preço viesse
+   * dele, o número no topo da tela ficaria parado cinco minutos e o operador leria como
+   * tela travada. O tick chega a cada ciclo do WebSocket e é a coisa mais viva que a
+   * plataforma tem. O dossiê continua mandando em tudo que exige o motor.
+   */
+  const precoAgora = tick?.preco ?? raciocinio?.preco ?? null;
+  const variacao = tick?.variacaoDia ?? raciocinio?.variacaoDia ?? null;
+  const subiu = (variacao ?? 0) >= 0;
+
+  // Frescura também pelo tick: ela muda a cada segundo, e o dossiê congelaria a resposta
+  // no instante do último recálculo.
+  const idade = tick?.idadeMinutos ?? raciocinio?.idadeMinutos ?? null;
+  const frescos = idade !== null ? idade < 15 : (raciocinio?.dadosFrescos ?? false);
 
   return (
     <header className="cartao surge flex flex-wrap items-end gap-x-8 gap-y-4 px-6 py-5">
@@ -136,14 +195,14 @@ function Cabecalho({
               frescos ? '' : 'text-texto-suave'
             }`}
           >
-            {raciocinio ? preco(raciocinio.preco, ativo) : '—'}
+            {precoAgora !== null ? preco(precoAgora, ativo) : '—'}
           </span>
-          {raciocinio && (
+          {variacao !== null && (
             <span
               className={`numerico text-lg font-semibold ${subiu ? 'text-alta' : 'text-baixa'}`}
             >
               {subiu ? '+' : ''}
-              {raciocinio.variacaoDia.toFixed(2)}%
+              {variacao.toFixed(2)}%
             </span>
           )}
         </div>
@@ -182,14 +241,14 @@ function Cabecalho({
           />
           {atualizando ? 'lendo…' : frescos ? 'ao vivo' : 'dados parados'}
         </span>
-        {raciocinio && (
+        {(tick?.ts ?? raciocinio?.momento) && (
           <span
             className={`numerico mt-0.5 block text-xs ${
               frescos ? 'text-texto-fraco' : 'text-aviso'
             }`}
-            title={`Último candle: ${new Date(raciocinio.momento).toLocaleString('pt-BR')}`}
+            title={`Último candle: ${dataHora((tick?.ts ?? raciocinio?.momento) as string)}`}
           >
-            candle {idadeDe(raciocinio.momento, agora)}
+            candle {idadeDe((tick?.ts ?? raciocinio?.momento) as string, agora)}
           </span>
         )}
         {ultimaAtualizacao && (

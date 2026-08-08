@@ -300,6 +300,72 @@ export interface PadraoCatalogo {
   observacao: string;
 }
 
+/**
+ * Preço ao vivo de um ativo, empurrado pelo WebSocket.
+ *
+ * `idadeMinutos` é a distância entre o candle e agora, e é o campo que decide se a tela
+ * pode se apresentar como tempo real. `ts` é o relógio do pregão rotulado como UTC —
+ * formate com os helpers de `formato.ts`, nunca com `toLocaleString` cru.
+ */
+export interface TickMercado {
+  ativo: Ativo;
+  ts: string | null;
+  preco: number | null;
+  aberturaDia: number | null;
+  variacaoDia: number | null;
+  idadeMinutos: number | null;
+}
+
+/** Uma entrada do dia, do ponto de vista de quem operaria. Vem de `/mercado/pregao`. */
+export interface EntradaPregao {
+  id: string;
+  ativo: Ativo;
+  hora: string;
+  ts: string;
+  direcao: Direcao;
+  padrao: string;
+  janela: string;
+  entrada: number;
+  stop: number;
+  alvo: number;
+  rr: number;
+  contratos: number;
+  riscoPontos: number;
+  score: number;
+  confiabilidade: number;
+  status: StatusSinal;
+  resultadoPontos: number | null;
+  resultadoReais: number | null;
+  resultadoR: number | null;
+  acionada: boolean;
+  encerrada: boolean;
+  observacao: string;
+}
+
+export interface PlacarPregao {
+  emitidos: number;
+  acionados: number;
+  alvo: number;
+  stop: number;
+  abertos: number;
+  expirados: number;
+  encerrados: number;
+  taxaAcerto: number;
+  expectanciaR: number;
+  resultadoReais: number;
+  resultadoR: number;
+  custoTotal: number;
+}
+
+export interface Pregao {
+  dia: string;
+  ativo: Ativo;
+  /** O dia ainda está em curso — o placar é parcial, não resultado. */
+  aberto: boolean;
+  placar: PlacarPregao;
+  entradas: EntradaPregao[];
+}
+
 export interface ResumoSinais {
   abertos: number;
   emitidosHoje: number;

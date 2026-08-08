@@ -44,6 +44,76 @@ const TRANSICOES: Record<string, TipoAlerta> = {
   EXPIRADO: 'sinal.expirado',
 };
 
+const ATIVOS = ['WIN', 'WDO'] as const;
+
+/**
+ * Preço e frescura de um ativo. É o que muda entre um candle e outro.
+ *
+ * `ts` sai como ISO do timestamp naive — o mesmo rótulo com `Z` que o resto da API usa.
+ * A tela lê os componentes em UTC e recupera o relógio do pregão; ver
+ * `frontend/src/lib/formato.ts`.
+ */
+interface TickMercado {
+  ativo: string;
+  ts: string | null;
+  preco: number | null;
+  aberturaDia: number | null;
+  variacaoDia: number | null;
+  idadeMinutos: number | null;
+}
+
+/**
+ * Último candle de cada ativo, direto do banco.
+ *
+ * Query barata de propósito: roda a cada ciclo de WebSocket e não pode custar o que custa
+ * um dossiê do motor. O dossiê caro só é recalculado quando o candle vira — e quem decide
+ * isso é `mercado.candle`, não um timer.
+ */
+async function lerTicks(): Promise<TickMercado[]> {
+  const agora = Date.now();
+
+  return Promise.all(
+    ATIVOS.map(async (ativo) => {
+      const ultimo = await prisma.candle.findFirst({
+        where: { ativo, timeframe: 'M5' },
+        orderBy: { ts: 'desc' },
+      });
+      if (!ultimo) {
+        return { ativo, ts: null, preco: null, aberturaDia: null, variacaoDia: null, idadeMinutos: null };
+      }
+
+      // Abertura do dia do próprio candle: o pregão começa às 9h e o primeiro candle do
+      // dia é a referência da variação. Usar o fechamento do dia anterior daria o número
+      // do home broker, mas o operador de day trade mede a partir da abertura.
+      const inicioDoDia = new Date(ultimo.ts);
+      inicioDoDia.setUTCHours(0, 0, 0, 0);
+      const primeiro = await prisma.candle.findFirst({
+        where: { ativo, timeframe: 'M5', ts: { gte: inicioDoDia } },
+        orderBy: { ts: 'asc' },
+      });
+
+      const preco = numero(ultimo.fechamento);
+      const abertura = primeiro ? numero(primeiro.abertura) : null;
+
+      // O `ts` é naive gravado como relógio do pregão; o Prisma o devolve rotulado como
+      // UTC. O processo Node roda em America/Sao_Paulo, então comparar `getTime()` cru
+      // com `Date.now()` erraria em 3 h — a mesma armadilha que fez a Mesa anunciar
+      // "dados parados há 6 h" com candle de 3h20.
+      const rotuloDoAgora = agora - new Date().getTimezoneOffset() * 60_000;
+      const idade = (rotuloDoAgora - ultimo.ts.getTime()) / 60_000;
+
+      return {
+        ativo,
+        ts: ultimo.ts.toISOString(),
+        preco,
+        aberturaDia: abertura,
+        variacaoDia: abertura ? ((preco - abertura) / abertura) * 100 : null,
+        idadeMinutos: Math.max(0, idade),
+      };
+    }),
+  );
+}
+
 export function montarWebSocket(servidor: Server): () => void {
   const wss = new WebSocketServer({ server: servidor, path: '/ws' });
 
@@ -87,6 +157,15 @@ export function montarWebSocket(servidor: Server): () => void {
     }
   }, 30_000);
 
+  /**
+   * Último candle transmitido por ativo, para detectar virada.
+   *
+   * É o que transforma polling em push: em vez de a tela perguntar "mudou?" de tempos em
+   * tempos, o servidor avisa quando mudou. A tela só refaz o trabalho caro — dossiê do
+   * motor, estrutura, gráfico — nesse momento.
+   */
+  const ultimoCandle = new Map<string, string>();
+
   const pesquisa = setInterval(async () => {
     try {
       const alertas = await detectarTransicoes(statusAnterior, iniciado);
@@ -98,6 +177,23 @@ export function montarWebSocket(servidor: Server): () => void {
         transmitir(wss, { tipo: 'alertas', dados: alertas });
       }
       transmitir(wss, { tipo: 'sinais.abertos', dados: await sinais.abertos(20) });
+
+      const ticks = await lerTicks();
+      transmitir(wss, { tipo: 'mercado.tick', dados: ticks });
+
+      // Um evento por ativo que virou candle. Separado do tick porque o custo do que ele
+      // dispara na tela é outra ordem de grandeza: o tick move um número, isto refaz o
+      // dossiê inteiro.
+      const viraram = ticks.filter((t) => t.ts !== null && ultimoCandle.get(t.ativo) !== t.ts);
+      for (const t of viraram) {
+        ultimoCandle.set(t.ativo, t.ts as string);
+      }
+      if (viraram.length > 0) {
+        transmitir(wss, {
+          tipo: 'mercado.candle',
+          dados: viraram.map((t) => ({ ativo: t.ativo, ts: t.ts })),
+        });
+      }
     } catch (erro) {
       logger.warn({ err: erro }, 'falha no ciclo de alertas');
     }
@@ -179,10 +275,20 @@ function serializar(s: Record<string, unknown>): Record<string, unknown> {
   return saida;
 }
 
+/**
+ * O que a aba precisa saber no instante em que conecta.
+ *
+ * Inclui os ticks: sem eles a tela ficaria com os campos vazios até o primeiro ciclo do
+ * timer, e uma tela que nasce vazia parece quebrada mesmo quando não está.
+ */
 async function enviarEstadoInicial(socket: Cliente): Promise<void> {
   try {
-    const [abertos, resumo] = await Promise.all([sinais.abertos(20), sinais.resumo()]);
-    enviar(socket, { tipo: 'estado.inicial', dados: { abertos, resumo } });
+    const [abertos, resumo, ticks] = await Promise.all([
+      sinais.abertos(20),
+      sinais.resumo(),
+      lerTicks(),
+    ]);
+    enviar(socket, { tipo: 'estado.inicial', dados: { abertos, resumo, ticks } });
   } catch (erro) {
     logger.warn({ err: erro }, 'falha ao enviar estado inicial');
   }

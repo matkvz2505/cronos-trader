@@ -170,6 +170,41 @@ def rota_diario(pedido: PedidoDiario) -> dict:
     }
 
 
+class PedidoPregao(BaseModel):
+    ativo: Literal["WIN", "WDO"]
+    dia: str | None = None
+    """`AAAA-MM-DD`. Ausente = hoje."""
+
+
+@app.post("/pregao")
+def rota_pregao(pedido: PedidoPregao) -> dict:
+    """O extrato do dia: cada entrada, na ordem, com o que aconteceu depois dela.
+
+    É a resposta para "cheguei tarde, o que eu perdi?". Diferente de `/diario`, que agrega
+    o período, aqui os trades aparecem um a um — o operador precisa ver a sequência para
+    aprender o critério, não só o placar.
+    """
+    from . import pregao as pregao_mod
+
+    if not persistencia.disponivel():
+        raise HTTPException(503, "DATABASE_URL não configurada no serviço de IA")
+
+    try:
+        dia = (
+            datetime.strptime(pedido.dia, "%Y-%m-%d").date()
+            if pedido.dia
+            else datetime.now().date()
+        )
+    except ValueError as erro:
+        raise HTTPException(422, f"data inválida: {pedido.dia!r}, use AAAA-MM-DD") from erro
+
+    inicio = datetime.combine(dia, datetime.min.time())
+    fim = datetime.combine(dia, datetime.max.time())
+    sinais = persistencia.ler_sinais_periodo(pedido.ativo, inicio, fim)
+
+    return pregao_mod.para_dict(pregao_mod.montar(pedido.ativo, sinais, dia))
+
+
 class PedidoRaciocinio(BaseModel):
     ativo: Literal["WIN", "WDO"]
     capital: float = Field(default=20_000.0, gt=0)

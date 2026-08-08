@@ -152,10 +152,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    ok, detalhe = persistencia.testar()
-    if not ok:
-        print(f"banco inacessível: {detalhe}", file=sys.stderr)
-        return 1
+    # Banco fora do ar NÃO é motivo para desistir num processo que deve viver o dia
+    # inteiro. O Docker sobe depois do logon, a máquina hiberna, o compose é recriado —
+    # em todos esses casos o coletor acordaria antes do Postgres e morreria. Espera.
+    if not args.uma_vez:
+        _esperar_banco()
+    else:
+        ok, detalhe = persistencia.testar()
+        if not ok:
+            print(f"banco inacessível: {detalhe}", file=sys.stderr)
+            return 1
 
     # Falha cedo e com mensagem útil se o pacote MT5 não existir — muito melhor que
     # descobrir isso no primeiro ciclo, dentro do laço de reconexão.
@@ -167,8 +173,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    signal.signal(signal.SIGINT, _sinal_de_parada)
-    signal.signal(signal.SIGTERM, _sinal_de_parada)
+    _instalar_sinais()
 
     print(
         f"coletor: {', '.join(args.ativos)} · {len(TIMEFRAMES)} timeframes · "
@@ -181,6 +186,62 @@ def main(argv: list[str] | None = None) -> int:
         return _ciclo_unico(args)
 
     return _laco_permanente(args)
+
+
+def _interativo() -> bool:
+    """Se este processo está numa janela com alguém olhando.
+
+    Sob a tarefa agendada a saída vai para arquivo, então `isatty()` é falso — é
+    exatamente a distinção de que `_instalar_sinais` precisa.
+    """
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _instalar_sinais() -> None:
+    """Ctrl+C encerra a janela interativa, mas NUNCA a tarefa agendada.
+
+    O Windows entrega o evento de Ctrl+C a **todos os processos que compartilham o
+    console**. A tarefa agendada roda na sessão interativa do usuário — ela precisa,
+    porque o MetaTrader 5 conversa por IPC com um terminal que vive ali — e acaba
+    dividindo console com o que mais estiver aberto. Resultado: um Ctrl+C em qualquer
+    outro terminal derrubava a coleta, silenciosamente, no meio do pregão. Foi o que
+    aconteceu em 07/08/2026 às 15:52, e o `^C` no meio do `logs/coletor.log` é a
+    assinatura desse bug.
+
+    `SIGTERM` continua honrado nos dois modos: é como `schtasks /End` e o desligamento do
+    Windows pedem para parar, e ignorá-lo trocaria um bug por outro.
+    """
+    signal.signal(signal.SIGTERM, _sinal_de_parada)
+
+    if _interativo():
+        signal.signal(signal.SIGINT, _sinal_de_parada)
+    else:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        print("modo desatendido: Ctrl+C de outro console será ignorado")
+
+
+def _esperar_banco(tentativa_max_s: float = 60.0) -> None:
+    """Bloqueia até o Postgres responder, com backoff limitado.
+
+    Sem teto o intervalo cresceria até horas e a coleta perderia o pregão inteiro por
+    causa de uma indisponibilidade de trinta segundos.
+    """
+    espera = 2.0
+    avisou = False
+    while not _parar:
+        ok, detalhe = persistencia.testar()
+        if ok:
+            if avisou:
+                print("banco de volta — retomando a coleta")
+            return
+        if not avisou:
+            print(f"banco inacessível ({detalhe.splitlines()[0]}) — aguardando", file=sys.stderr)
+            avisou = True
+        time.sleep(espera)
+        espera = min(tentativa_max_s, espera * 2)
 
 
 def _ciclo_unico(args) -> int:

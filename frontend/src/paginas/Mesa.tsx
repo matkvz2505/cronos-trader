@@ -7,7 +7,7 @@ import { api } from '../lib/api';
 import { emR, percentual, preco } from '../lib/formato';
 import { useAuth } from '../lib/auth';
 import { useSinaisAoVivo } from '../lib/useSinaisAoVivo';
-import type { Ativo, Raciocinio, Saude } from '../lib/tipos';
+import type { Ativo, Raciocinio, Saude, TickMercado } from '../lib/tipos';
 
 const ATIVOS: Ativo[] = ['WIN', 'WDO'];
 const NOME: Record<Ativo, string> = { WIN: 'Mini-índice', WDO: 'Mini-dólar' };
@@ -21,10 +21,15 @@ const NOME: Record<Ativo, string> = { WIN: 'Mini-índice', WDO: 'Mini-dólar' };
  */
 export function Mesa() {
   const { usuario } = useAuth();
-  const { abertos, resumo, estado } = useSinaisAoVivo();
+  const { abertos, resumo, estado, ticks } = useSinaisAoVivo();
   const [leituras, setLeituras] = useState<Record<string, Raciocinio | null>>({});
   const [saude, setSaude] = useState<Saude | null>(null);
   const [carregando, setCarregando] = useState(true);
+
+  // O dossiê é derivado do último candle FECHADO. Enquanto os `ts` não mudam, pedir de
+  // novo devolve byte por byte a mesma resposta — e são duas chamadas ao motor. O preço
+  // que corre na tela vem dos ticks, que o servidor empurra a cada ciclo.
+  const gatilho = `${ticks.WIN?.ts ?? ''}|${ticks.WDO?.ts ?? ''}`;
 
   useEffect(() => {
     let vivo = true;
@@ -42,12 +47,13 @@ export function Mesa() {
     };
 
     void carregar();
-    const timer = window.setInterval(() => void carregar(), 30_000);
+    // Rede de segurança para WebSocket fora do ar; com o push funcionando não traz nada.
+    const timer = window.setInterval(() => void carregar(), 60_000);
     return () => {
       vivo = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [gatilho]);
 
   const semCandles = (saude?.candles ?? []).length === 0;
   const lidos = Object.values(leituras).filter(Boolean) as Raciocinio[];
@@ -100,7 +106,7 @@ export function Mesa() {
       ) : (
         <section className="grid gap-4 lg:grid-cols-2">
           {ATIVOS.map((a) => (
-            <CartaoAtivo key={a} ativo={a} raciocinio={leituras[a] ?? null} />
+            <CartaoAtivo key={a} ativo={a} raciocinio={leituras[a] ?? null} tick={ticks[a]} />
           ))}
         </section>
       )}
@@ -196,7 +202,15 @@ function EstadoDaColeta({ semCandles, idade }: { semCandles: boolean; idade: num
 }
 
 /** Cartão de um ativo: preço, viés, e o que está sendo vigiado. Leva à Sala. */
-function CartaoAtivo({ ativo, raciocinio }: { ativo: Ativo; raciocinio: Raciocinio | null }) {
+function CartaoAtivo({
+  ativo,
+  raciocinio,
+  tick,
+}: {
+  ativo: Ativo;
+  raciocinio: Raciocinio | null;
+  tick: TickMercado | undefined;
+}) {
   if (!raciocinio) {
     return (
       <div className="cartao px-5 py-6">
@@ -206,7 +220,11 @@ function CartaoAtivo({ ativo, raciocinio }: { ativo: Ativo; raciocinio: Raciocin
     );
   }
 
-  const subiu = raciocinio.variacaoDia >= 0;
+  // Preço do tick, leitura do dossiê: o primeiro corre a cada ciclo, o segundo muda
+  // quando o candle fecha. Misturar os dois numa fonte só congelaria o preço por 5min.
+  const precoAgora = tick?.preco ?? raciocinio.preco;
+  const variacao = tick?.variacaoDia ?? raciocinio.variacaoDia;
+  const subiu = variacao >= 0;
   const temSinal = Boolean(raciocinio.sinal);
 
   return (
@@ -221,11 +239,11 @@ function CartaoAtivo({ ativo, raciocinio }: { ativo: Ativo; raciocinio: Raciocin
           <p className="rotulo">{NOME[ativo]}</p>
           <div className="mt-1 flex items-baseline gap-2.5">
             <span className="numerico text-3xl font-semibold tracking-tight">
-              {preco(raciocinio.preco, ativo)}
+              {preco(precoAgora, ativo)}
             </span>
             <span className={`numerico text-sm font-semibold ${subiu ? 'text-alta' : 'text-baixa'}`}>
               {subiu ? '+' : ''}
-              {raciocinio.variacaoDia.toFixed(2)}%
+              {variacao.toFixed(2)}%
             </span>
           </div>
         </div>

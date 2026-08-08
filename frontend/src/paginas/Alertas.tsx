@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { CartaoSinal } from '../components/CartaoSinal';
+import { PregaoDeHoje } from '../components/PregaoDeHoje';
 import { Alerta as Caixa, Botao } from '../components/ui';
 import { api } from '../lib/api';
 import { emR, horario, percentual, preco } from '../lib/formato';
@@ -98,6 +99,13 @@ export function Alertas() {
           {estado === 'conectado' ? 'recebendo' : estado}
         </span>
       </header>
+
+      {/*
+        Vem ANTES do feed de propósito. O feed só tem o que aconteceu desde que a aba
+        abriu; quem senta na mesa às 15h veria uma tela vazia e concluiria que o dia não
+        teve entrada. O extrato do banco responde primeiro.
+      */}
+      <PregaoDeHoje />
 
       <Caixa tom="info">
         <strong>Por que o filtro não é "acerto acima de 50%".</strong> Taxa de acerto sozinha

@@ -280,8 +280,25 @@ trocar por copy sem acento resolveria o parser piorando o produto.
 - **MT5 é Windows-only e exige terminal aberto e logado numa corretora B3.** Demo da
   MetaQuotes não tem ativos da B3. Por isso o coletor roda no host, não em container, e
   `import MetaTrader5` acontece dentro de funções, nunca no topo de módulo.
-- **Rollover de contrato corrompe backtest em silêncio.** Use símbolo contínuo (`WIN$N`)
-  para histórico e descarte a janela de virada.
+- **Rollover de contrato corrompe backtest em silêncio.** Descarte a janela de virada
+  (`fontes/contratos.em_rollover`).
+- **Não colete pelo símbolo contínuo (`WIN$N`, `WDO$N`) nesta corretora.** Ele atrasa: em
+  07/08/2026 os dois pararam às **15:50** enquanto `WINQ26` e `WDOU26` tinham o pregão
+  inteiro até 18:30. Já apareceu pior — `WIN$N` chegou a ficar um dia parado com o
+  mercado aberto. O coletor usa `codigo_vigente()` por padrão, e `--continuo` existe só
+  para histórico longo, onde a emenda entre contratos importa mais que o atraso.
+- **A primeira leitura após `symbol_select` pode vir incompleta.** O MT5 baixa histórico
+  de forma assíncrona: o mesmo `copy_rates_from_pos` que devolveu candles até 15:50
+  devolveu até 18:30 na chamada seguinte. No laço do coletor isso se corrige sozinho no
+  ciclo de 30s; num backfill de uma tacada só, **rode duas vezes e confira o `max(ts)`**.
+- **O coletor ignora `Ctrl+C` quando roda desatendido.** O Windows entrega o evento a
+  todos os processos que compartilham o console, e a tarefa agendada divide a sessão
+  interativa com qualquer terminal aberto — um `Ctrl+C` em outra janela matava a coleta
+  no meio do pregão (`^C` solto no `logs/coletor.log` é a assinatura). `SIGTERM` continua
+  honrado: é como `schtasks /End` pede para parar.
+- **Banco fora do ar não derruba o coletor**, ele espera com backoff. O Docker sobe depois
+  do logon e a máquina hiberna; sair com erro nesses casos transferiria para a tarefa
+  agendada a responsabilidade de religar, e ela já falhou nisso uma vez.
 - **`tolerancia_gap_atr` é o limiar mais sensível do motor.** Zero mata 8 padrões em
   intraday; alto demais faz todos dispararem sempre. Calibrar por timeframe antes de
   qualquer outra coisa.

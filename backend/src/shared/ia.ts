@@ -85,6 +85,19 @@ export const ia = {
       body: JSON.stringify({ ativo, periodo }),
     }),
 
+  /**
+   * O extrato do dia: cada entrada, na ordem, com o que aconteceu depois dela.
+   *
+   * Vive no motor e não aqui porque converter pontos em reais é regra de instrumento —
+   * WIN e WDO têm valor de ponto e custo diferentes, e duas implementações da mesma
+   * conta divergem na primeira mudança de tabela da B3.
+   */
+  pregao: (ativo: string, dia?: string) =>
+    chamar<Record<string, unknown>>('/pregao', {
+      method: 'POST',
+      body: JSON.stringify({ ativo, dia: dia ?? null }),
+    }),
+
   /** O que o motor está pensando agora — alimenta a Sala de Operações. */
   raciocinio: (ativo: string, capital: number) =>
     chamar<Record<string, unknown>>('/raciocinio', {

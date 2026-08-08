@@ -127,6 +127,33 @@ mercadoRoutes.get(
   }),
 );
 
+const pregaoQuery = z.object({
+  ativo: ativoSchema.default('WIN'),
+  // `AAAA-MM-DD`. Não é `coerce.date()` de propósito: o `ts` do candle é relógio de parede
+  // do pregão, e converter para Date aqui reintroduziria fuso numa data que não tem.
+  dia: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'use AAAA-MM-DD')
+    .optional(),
+});
+
+/**
+ * O extrato do dia: cada entrada, na ordem, com o que aconteceu depois dela.
+ *
+ * Existe separado de `/diario` porque as duas perguntas são diferentes. O diário fecha o
+ * período em placar; isto conta a sequência. Quem senta na mesa às 15h não quer saber a
+ * expectância do dia — quer ver as duas entradas que apareceram às 10h e por quê.
+ */
+mercadoRoutes.get(
+  '/pregao',
+  autenticar,
+  validarQuery(pregaoQuery),
+  assincrono(async (req, res) => {
+    const { ativo, dia } = req.query as unknown as z.infer<typeof pregaoQuery>;
+    res.json(await ia.pregao(ativo, dia));
+  }),
+);
+
 /** Estrutura gráfica para anotar o gráfico: canal, pivôs, rompimentos, zonas. */
 mercadoRoutes.get(
   '/estrutura',
