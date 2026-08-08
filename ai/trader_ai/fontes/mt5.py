@@ -18,11 +18,24 @@ não quebra — só falha ao usar.
 from __future__ import annotations
 
 import os
+import sys
+import time
 from datetime import UTC, datetime
 
 from ..tipos import Candle, Serie, Timeframe
 from .base import FonteIndisponivel
 from .contratos import codigo_vigente, simbolo_continuo
+
+# Leituras até a série parar de crescer. Três é o suficiente na prática: a segunda já
+# costuma vir completa, e a terceira confirma. Mais que isso só atrasaria o ciclo do
+# coletor quando o símbolo genuinamente não tem mais dado.
+TENTATIVAS_HISTORICO = 3
+ESPERA_HISTORICO_S = 0.6
+
+# Atraso do símbolo contínuo que justifica trocar pelo contrato vigente. Dez minutos são
+# dois candles de M5 — abaixo disso pode ser só a defasagem normal da emenda; acima, é
+# dado faltando.
+ATRASO_MAXIMO_MIN = 10.0
 
 
 def _credenciais_do_ambiente() -> tuple[int, str, str] | None:
@@ -152,9 +165,22 @@ class MetaTrader5Fonte:
     def __init__(self, caminho_terminal: str | None = None, continuo: bool = False):
         self.caminho_terminal = caminho_terminal or os.environ.get("MT5_CAMINHO") or None
         self.continuo = continuo
-        """`True` usa o símbolo contínuo ajustado (`WIN$N`) — o correto para backtest.
-        `False` usa o contrato vigente, que é onde está a liquidez no tempo real."""
+        """`True` usa o símbolo contínuo ajustado (`WIN$N`) — o correto para backtest,
+        onde a emenda entre contratos importa. `False` usa o contrato vigente, que é onde
+        está a liquidez no tempo real.
+
+        Mesmo com `True`, `ultimos()` troca para o contrato vigente se o contínuo estiver
+        atrasado: ver `_simbolo_para_leitura`."""
         self._ligado = False
+
+        # Símbolos já selecionados nesta sessão. `symbol_select` é idempotente, mas
+        # chamá-lo a cada leitura custa uma ida ao terminal por timeframe por ciclo.
+        self._seguros: set[str] = set()
+
+        # Contínuos que já se provaram atrasados, e por qual contrato foram trocados.
+        # Medir uma vez por sessão basta: um símbolo que atrasa não volta ao normal no
+        # meio do pregão, e refazer a comparação a cada ciclo dobraria as leituras.
+        self._trocados: dict[str, str] = {}
 
     # -- ciclo de vida ------------------------------------------------------
 
@@ -195,6 +221,10 @@ class MetaTrader5Fonte:
         if self._ligado:
             _mt5().shutdown()
             self._ligado = False
+        # Os caches valem por sessão do terminal: reconectar pode cair noutro terminal,
+        # com outros símbolos visíveis e outro estado de download de histórico.
+        self._seguros.clear()
+        self._trocados.clear()
 
     def __enter__(self) -> MetaTrader5Fonte:
         self.conectar()
@@ -225,26 +255,124 @@ class MetaTrader5Fonte:
         erro mais comum de quem começa com a API.
         """
         mt5 = _mt5()
+        if simbolo in self._seguros:
+            return
         if not mt5.symbol_select(simbolo, True):
             raise FonteIndisponivel(
                 f"símbolo {simbolo} indisponível no terminal ({mt5.last_error()}). "
                 "Sua corretora dá acesso a esse contrato?"
             )
+        self._seguros.add(simbolo)
 
     # -- leitura ------------------------------------------------------------
+
+    def _ultima_barra(self, simbolo: str, timeframe: Timeframe) -> datetime | None:
+        """O `ts` da barra mais recente que o terminal tem para o símbolo, ou `None`."""
+        barras = _mt5().copy_rates_from_pos(simbolo, _timeframe_mt5(timeframe), 0, 1)
+        if barras is None or len(barras) == 0:
+            return None
+        return hora_do_servidor(int(barras[-1]["time"]))
+
+    def _ler_barras(self, simbolo: str, timeframe: Timeframe, quantidade: int):
+        """`copy_rates_from_pos` esperando o histórico assíncrono terminar de chegar.
+
+        **O MT5 baixa histórico em segundo plano**, e `symbol_select` devolver `True` não
+        significa que ele chegou. A mesma chamada que devolveu barras até 15:50 devolveu
+        até 18:30 alguns segundos depois — sem erro nenhum, sem aviso. Num backfill de uma
+        tacada isso vira dado faltando que ninguém percebe, porque a série *parece*
+        completa: ela só termina cedo.
+
+        O critério de "chegou" é a série parar de crescer entre duas leituras. Comparar
+        com o relógio não serviria: fora do pregão a última barra é legitimamente antiga,
+        e a espera nunca terminaria.
+        """
+        mt5 = _mt5()
+        codigo = _timeframe_mt5(timeframe)
+
+        anterior = None
+        for tentativa in range(TENTATIVAS_HISTORICO):
+            barras = mt5.copy_rates_from_pos(simbolo, codigo, 0, quantidade)
+            if barras is None or len(barras) == 0:
+                # Recém-selecionado costuma devolver vazio na primeira leitura; só é
+                # erro de verdade se continuar vazio depois de esperar.
+                if tentativa == TENTATIVAS_HISTORICO - 1:
+                    return barras
+                time.sleep(ESPERA_HISTORICO_S)
+                continue
+
+            fim = (len(barras), int(barras[-1]["time"]))
+            if fim == anterior:
+                return barras
+            anterior = fim
+            time.sleep(ESPERA_HISTORICO_S)
+
+        return barras
 
     def ultimos(self, ativo: str, timeframe: Timeframe, quantidade: int) -> Serie:
         self._garantir_conexao()
         mt5 = _mt5()
-        simbolo = self.resolver_simbolo(ativo)
+        simbolo = self._simbolo_para_leitura(ativo, timeframe)
         self.selecionar(simbolo)
 
-        barras = mt5.copy_rates_from_pos(simbolo, _timeframe_mt5(timeframe), 0, quantidade)
+        barras = self._ler_barras(simbolo, timeframe, quantidade)
         if barras is None or len(barras) == 0:
             raise FonteIndisponivel(
                 f"sem dados para {simbolo} {timeframe.rotulo}: {mt5.last_error()}"
             )
         return Serie(ativo.strip().upper()[:3], timeframe, _converter(barras))
+
+    def _simbolo_para_leitura(self, ativo: str, timeframe: Timeframe) -> str:
+        """O símbolo a usar, trocando o contínuo pelo vigente se ele estiver mesmo atrás.
+
+        **Rede de segurança, não regra.** Em 07/08/2026 `WIN$N` e `WDO$N` apareceram
+        parados às 15:50 enquanto `WINQ26` e `WDOU26` tinham o pregão até 18:30, e a
+        leitura óbvia foi "o contínuo atrasa nesta corretora". **Não atrasa.** A tentativa
+        de reproduzir mostrou que aquelas leituras eram do download assíncrono de
+        histórico — o mesmo defeito que `_ler_barras` resolve. Com a espera no lugar, o
+        contínuo devolve exatamente o que o contrato vigente devolve, e esta função nunca
+        troca nada.
+
+        O que sobra é um guarda contra dado velho de qualquer origem, e ele vale porque o
+        modo de falha é o pior possível: uma série que termina cedo passa por completa.
+        Quando dispara, avisa alto — se algum dia isso aparecer no log, é sinal de que
+        existe um segundo fenômeno, e aí sim ele terá sido medido.
+
+        `periodo()` não passa por aqui: em histórico longo a emenda entre contratos é
+        justamente o motivo de pedir o contínuo.
+        """
+        simbolo = self.resolver_simbolo(ativo)
+        if not self.continuo:
+            return simbolo
+
+        base = ativo.strip().upper()[:3]
+        vigente = codigo_vigente(base, datetime.now().date())
+        if vigente == simbolo or simbolo in self._trocados:
+            return self._trocados.get(simbolo, simbolo)
+
+        self.selecionar(simbolo)
+        try:
+            self.selecionar(vigente)
+        except FonteIndisponivel:
+            return simbolo  # sem contrato vigente no terminal, o contínuo é o que há
+
+        fim_continuo = self._ultima_barra(simbolo, timeframe)
+        fim_vigente = self._ultima_barra(vigente, timeframe)
+        if fim_continuo is None or fim_vigente is None:
+            return simbolo
+
+        atraso = (fim_vigente - fim_continuo).total_seconds() / 60
+        if atraso < ATRASO_MAXIMO_MIN:
+            return simbolo
+
+        # Alto de propósito: dado faltando em silêncio é o pior modo de falha do coletor.
+        print(
+            f"  {simbolo} está {atraso:.0f} min atrás de {vigente} "
+            f"({fim_continuo:%d/%m %H:%M} vs {fim_vigente:%d/%m %H:%M}) — "
+            f"usando {vigente}",
+            file=sys.stderr,
+        )
+        self._trocados[simbolo] = vigente
+        return vigente
 
     def periodo(
         self, ativo: str, timeframe: Timeframe, inicio: datetime, fim: datetime

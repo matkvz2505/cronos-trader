@@ -282,15 +282,27 @@ trocar por copy sem acento resolveria o parser piorando o produto.
   `import MetaTrader5` acontece dentro de funções, nunca no topo de módulo.
 - **Rollover de contrato corrompe backtest em silêncio.** Descarte a janela de virada
   (`fontes/contratos.em_rollover`).
-- **Não colete pelo símbolo contínuo (`WIN$N`, `WDO$N`) nesta corretora.** Ele atrasa: em
-  07/08/2026 os dois pararam às **15:50** enquanto `WINQ26` e `WDOU26` tinham o pregão
-  inteiro até 18:30. Já apareceu pior — `WIN$N` chegou a ficar um dia parado com o
-  mercado aberto. O coletor usa `codigo_vigente()` por padrão, e `--continuo` existe só
-  para histórico longo, onde a emenda entre contratos importa mais que o atraso.
-- **A primeira leitura após `symbol_select` pode vir incompleta.** O MT5 baixa histórico
-  de forma assíncrona: o mesmo `copy_rates_from_pos` que devolveu candles até 15:50
-  devolveu até 18:30 na chamada seguinte. No laço do coletor isso se corrige sozinho no
-  ciclo de 30s; num backfill de uma tacada só, **rode duas vezes e confira o `max(ts)`**.
+- **A primeira leitura após `symbol_select` pode vir incompleta — e é a causa raiz de uma
+  família inteira de sintomas.** O MT5 baixa histórico de forma assíncrona e
+  `symbol_select` devolver `True` não significa que ele chegou: o mesmo
+  `copy_rates_from_pos` devolveu candles até 15:50 e, segundos depois, até 18:30. Sem
+  erro, sem aviso — a série só termina cedo, e uma série que termina cedo *passa por
+  completa*. Custou de 15:50 a 18:30 do pregão de 07/08/2026.
+
+  `MetaTrader5Fonte._ler_barras` relê até a série parar de crescer. O critério é a
+  estabilidade entre duas leituras, não o relógio: fora do pregão a última barra é
+  legitimamente antiga e uma espera baseada em relógio nunca terminaria.
+
+  > **Erro de diagnóstico que quase virou doutrina:** na mesma sessão, `WIN$N` e `WDO$N`
+  > apareceram parados às 15:50 enquanto `WINQ26` e `WDOU26` iam até 18:30, e eu escrevi
+  > aqui que "o símbolo contínuo atrasa nesta corretora". **Não atrasa.** Aquelas leituras
+  > vinham de uma varredura que fazia `symbol_select` + leitura imediata em 40 símbolos
+  > seguidos — todas sujeitas ao mesmo download assíncrono. Com a espera no lugar, o
+  > contínuo devolve o mesmo que o contrato vigente. Duas armadilhas eram uma só.
+  >
+  > Fica um guarda em `_simbolo_para_leitura` que troca o contínuo pelo vigente se ele
+  > estiver ≥10 min atrás **depois** de as duas séries estabilizarem. Se algum dia ele
+  > disparar no log, aí sim existe um segundo fenômeno — e terá sido medido.
 - **O coletor ignora `Ctrl+C` quando roda desatendido.** O Windows entrega o evento a
   todos os processos que compartilham o console, e a tarefa agendada divide a sessão
   interativa com qualquer terminal aberto — um `Ctrl+C` em outra janela matava a coleta
