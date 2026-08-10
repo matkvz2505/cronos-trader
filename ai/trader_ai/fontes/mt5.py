@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 
 from ..tipos import Candle, Serie, Timeframe
 from .base import FonteIndisponivel
-from .contratos import codigo_vigente, simbolo_continuo
+from .contratos import codigo_vigente, em_rollover, simbolo_continuo, vencimento
 
 # Leituras até a série parar de crescer. Três é o suficiente na prática: a segunda já
 # costuma vir completa, e a terceira confirma. Mais que isso só atrasaria o ciclo do
@@ -181,6 +181,10 @@ class MetaTrader5Fonte:
         # Medir uma vez por sessão basta: um símbolo que atrasa não volta ao normal no
         # meio do pregão, e refazer a comparação a cada ciclo dobraria as leituras.
         self._trocados: dict[str, str] = {}
+
+        # Ativos cujo aviso de rollover já foi dado. Sem isto o log ganharia uma linha
+        # a cada timeframe de cada ciclo — 8 por 30 segundos — e o aviso viraria ruído.
+        self._avisou_rollover: set[str] = set()
 
     # -- ciclo de vida ------------------------------------------------------
 
@@ -340,12 +344,40 @@ class MetaTrader5Fonte:
         `periodo()` não passa por aqui: em histórico longo a emenda entre contratos é
         justamente o motivo de pedir o contínuo.
         """
+        base = ativo.strip().upper()[:3]
+        hoje = datetime.now().date()
+        pediu_base = ativo.strip().upper() in ("WIN", "WDO")
+
+        # --- virada de contrato -------------------------------------------
+        # `codigo_vigente` pula para o contrato SEGUINTE assim que a janela de rollover
+        # abre, e está certo: o volume já migrou, e operar o que vence é operar book
+        # vazio. Só que o contrato seguinte negocia noutro nível de preço — em
+        # 10/08/2026 o WINV26 estava 3.500 pontos acima do WINQ26, puro custo de carrego.
+        #
+        # Gravar isso na mesma série `WIN` emenda dois papéis e inventa um gap que o
+        # mercado nunca fez. ATR, tendência, pivôs e médias passam a ser calculados sobre
+        # um salto de 2% que não existiu — e o pior é que tudo continua parecendo normal.
+        #
+        # Durante a janela a série continua no símbolo contínuo, que é o que preserva a
+        # história. Quem decide não operar aí é o coletor, que suprime sinal enquanto
+        # `em_rollover` for verdadeiro.
+        if pediu_base and em_rollover(base, hoje):
+            continuo = simbolo_continuo(base)
+            if base not in self._avisou_rollover:
+                self._avisou_rollover.add(base)
+                print(
+                    f"  {base} em rollover (vence {vencimento(base, hoje.year, hoje.month):%d/%m}) "
+                    f"— série segue em {continuo}, sinais suspensos",
+                    file=sys.stderr,
+                )
+            self.selecionar(continuo)
+            return continuo
+
         simbolo = self.resolver_simbolo(ativo)
         if not self.continuo:
             return simbolo
 
-        base = ativo.strip().upper()[:3]
-        vigente = codigo_vigente(base, datetime.now().date())
+        vigente = codigo_vigente(base, hoje)
         if vigente == simbolo or simbolo in self._trocados:
             return self._trocados.get(simbolo, simbolo)
 

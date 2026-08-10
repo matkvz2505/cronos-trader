@@ -63,25 +63,27 @@ $Logs = Join-Path $Raiz 'logs'
 New-Item -ItemType Directory -Force -Path $Logs | Out-Null
 $LogArquivo = Join-Path $Logs 'coletor.log'
 
-# Um .bat em vez de `cmd /c "..."`: o redirecionamento precisa de aspas no caminho do
-# log, e essas aspas dentro do argumento já entre aspas do `/c` quebram o parser do cmd.
-# O arquivo elimina o aninhamento — e ainda deixa o comando legível para depuração.
+# Python DIRETO, sem `.bat` e sem `cmd /c`. Não é simplificação estética: o `cmd.exe` do
+# wrapper interceptava o Ctrl+C do console — que a tarefa agendada compartilha com a
+# sessão interativa do usuário —, perguntava "Terminate batch job (Y/N)?", lia EOF do
+# stdin nulo e encerrava com código 1, levando a coleta junto no meio do pregão.
+# Ignorar SIGINT no Python não resolvia: quem morria era o processo pai.
 #
-# `-u` é obrigatório: sem ele o Python bufferiza a saída redirecionada e o log fica vazio
-# por minutos, justamente quando se precisa dele.
-$bat = Join-Path $PSScriptRoot 'rodar-coletor.bat'
-$conteudoBat = @"
-@echo off
-rem Gerado por instalar-coletor.ps1 - nao edite; rode o instalador de novo.
-rem Arquivo em ASCII puro: .bat com acento vira mojibake no console do Windows.
-cd /d "$Ai"
-set "DATABASE_URL=$BancoUrl"
-set "PYTHONPATH=$Ai"
-"$python" -u -m trader_ai.coletor --ativos $($Ativos -join ' ') --capital $Capital --verboso >> "$LogArquivo" 2>&1
-"@
-Set-Content -Path $bat -Value $conteudoBat -Encoding ASCII
+# Sem o `.bat` some também o aninhamento de aspas do redirecionamento, que já tinha
+# quebrado este instalador uma vez. Quem escreve o log agora é o próprio coletor
+# (`--log`), o que ainda corrige o mojibake do codepage do console.
+#
+# `-u` continua obrigatório: sem ele a saída fica buferizada e o log some justamente
+# quando é preciso.
+$argumentos = @(
+    '-u', '-m', 'trader_ai.coletor',
+    '--ativos') + $Ativos + @(
+    '--capital', $Capital,
+    '--log', $LogArquivo,
+    '--verboso'
+)
 
-$acao = New-ScheduledTaskAction -Execute $bat -WorkingDirectory $Ai
+$acao = New-ScheduledTaskAction -Execute $python -Argument ($argumentos -join ' ') -WorkingDirectory $Ai
 
 $gatilhos = @(
     # No logon: se a máquina ligou depois das 9h, o coletor já sobe coletando.
@@ -113,9 +115,20 @@ Register-ScheduledTask `
     -Principal $principal `
     -Description 'Coleta MT5 -> Postgres do Cronos Trader. Opera das 9h as 18h; dorme fora disso.' | Out-Null
 
-# A variável de ambiente precisa existir para o processo da tarefa. Gravada no usuário
-# para sobreviver a reboot — o processo da tarefa não herda o ambiente deste terminal.
+# As variáveis precisam existir para o processo da tarefa. Gravadas no usuário para
+# sobreviver a reboot — o processo da tarefa não herda o ambiente deste terminal.
 [Environment]::SetEnvironmentVariable('DATABASE_URL', $BancoUrl, 'User')
+# `python -m` já põe o diretório de trabalho no `sys.path`, mas o `PYTHONPATH` explícito
+# torna a tarefa imune a alguém mexer no `-WorkingDirectory`.
+[Environment]::SetEnvironmentVariable('PYTHONPATH', $Ai, 'User')
+
+# O wrapper antigo não é mais usado — deixá-lo no disco convida alguém a rodá-lo e
+# reencontrar o bug do Ctrl+C.
+$batAntigo = Join-Path $PSScriptRoot 'rodar-coletor.bat'
+if (Test-Path $batAntigo) {
+    Remove-Item $batAntigo -Force
+    Escrever '  removido o rodar-coletor.bat antigo (o cmd.exe dele matava a coleta no Ctrl+C)' 'DarkGray'
+}
 
 Escrever "`nTarefa '$Nome' registrada." 'Green'
 Escrever "  ativos ..... $($Ativos -join ', ')"

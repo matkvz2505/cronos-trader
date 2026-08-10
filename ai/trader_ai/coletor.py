@@ -30,6 +30,7 @@ from datetime import time as hora_do_dia
 
 from . import padroes, persistencia
 from .fontes.base import FonteIndisponivel
+from .fontes.contratos import em_rollover
 from .pipeline import analisar
 from .tipos import Timeframe
 
@@ -107,6 +108,16 @@ def ciclo(fonte, ativos: list[str], capital: float, barras: int, verboso: bool) 
             # para formar o viés e alimentar o gráfico — emitir sinal em todos eles
             # geraria quatro versões do mesmo trade.
             if tf is Timeframe.M5:
+                # Na virada de contrato o motor continua lendo — o gráfico e o viés
+                # seguem úteis — mas não emite entrada. Operar o contrato que vence é
+                # operar book vazio, e o que tem liquidez negocia noutro nível de preço.
+                # É a mesma regra que o backtest aplica ao descartar a janela; o que
+                # faltava era o tempo real aplicá-la também.
+                if em_rollover(ativo, serie[-1].ts.date()):
+                    if verboso:
+                        print(f"  {ativo} em rollover — sinais suspensos até a virada")
+                    continue
+
                 analise = analisar(serie, capital=capital, ultimos=30)
                 vies = analise.vies.descrever() if analise.vies else None
                 novos = persistencia.gravar_sinais(analise.sinais, vies, analise.teses)
@@ -123,7 +134,10 @@ def ciclo(fonte, ativos: list[str], capital: float, barras: int, verboso: bool) 
                     print(f"  [{marca}] {ativo} {tf.rotulo}: {' · '.join(partes)}")
 
                 for sinal in analise.sinais[-3:]:
-                    print(f"      → {sinal.resumo()}")
+                    # ASCII puro: o console do Windows roda em CP1252 e um `→` aqui
+                    # levantava UnicodeEncodeError, que o catch-all do laço transformava
+                    # em "erro no ciclo" — e o ciclo inteiro morria por causa de uma seta.
+                    print(f"      -> {sinal.resumo()}")
             elif verboso:
                 print(f"  {ativo} {tf.rotulo}: {gravados} candles")
 
@@ -140,8 +154,19 @@ def main(argv: list[str] | None = None) -> int:
         help="usa o símbolo contínuo (WIN$N) em vez do contrato vigente",
     )
     parser.add_argument("--uma-vez", action="store_true", help="roda um ciclo e sai")
+    parser.add_argument(
+        "--log",
+        help=(
+            "arquivo de log. Existe para a tarefa agendada NÃO precisar de um .bat com "
+            "redirecionamento: o cmd.exe intercepta o Ctrl+C do console, pergunta "
+            '"Terminate batch job?", lê EOF do stdin nulo e mata a coleta com código 1'
+        ),
+    )
     parser.add_argument("--verboso", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.log:
+        _redirecionar_para(args.log)
 
     if not persistencia.disponivel():
         print(
@@ -186,6 +211,33 @@ def main(argv: list[str] | None = None) -> int:
         return _ciclo_unico(args)
 
     return _laco_permanente(args)
+
+
+def _redirecionar_para(caminho: str) -> None:
+    """Manda stdout e stderr para um arquivo, sem `cmd` no meio.
+
+    **Isto é o que mantém a coleta viva.** A tarefa agendada rodava um `.bat` que fazia
+    `>> log 2>&1`, e o `cmd.exe` desse `.bat` interceptava o Ctrl+C do console
+    compartilhado, perguntava "Terminate batch job (Y/N)?", lia EOF do stdin nulo e
+    encerrava com código 1 — levando o Python junto. Ignorar `SIGINT` no Python não
+    resolvia: quem morria era o processo pai.
+
+    Sem `.bat` some também o aninhamento de aspas que já tinha quebrado o instalador uma
+    vez, e o log passa a sair em UTF-8 de verdade em vez do codepage do console.
+
+    `buffering=1` (linha a linha) é obrigatório: sem ele uma falha de conexão fica presa
+    no buffer justamente quando alguém precisa lê-la.
+    """
+    from pathlib import Path
+
+    destino = Path(caminho)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    # `errors="replace"` porque log NUNCA pode derrubar a coleta: um caractere que o
+    # destino não representa vira `?` em vez de exceção. Já custou um ciclo inteiro, com
+    # o `UnicodeEncodeError` de uma seta virando "erro no ciclo".
+    fluxo = open(destino, "a", encoding="utf-8", errors="replace", buffering=1)  # noqa: SIM115
+    sys.stdout = fluxo
+    sys.stderr = fluxo
 
 
 def _interativo() -> bool:

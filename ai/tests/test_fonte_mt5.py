@@ -140,6 +140,27 @@ def sem_espera(monkeypatch):
     monkeypatch.setattr(mt5_mod.time, "sleep", lambda _s: None)
 
 
+@pytest.fixture(autouse=True)
+def calendario_fixo(monkeypatch):
+    """Nenhum teste deste arquivo pode depender da data em que roda.
+
+    Duas dependências de calendário, e ambas quebraram a suíte ao rodá-la em 10/08/2026,
+    dois dias antes do vencimento do WIN:
+
+    - `em_rollover` fica verdadeiro por alguns dias a cada dois meses;
+    - `codigo_vigente` devolve o contrato do mês — `WINQ26` em julho, `WINV26` em agosto.
+
+    Fixar os dois é o que separa "o teste falhou" de "hoje é dia 10". Os testes de
+    rollover sobrescrevem `em_rollover` no corpo.
+    """
+    monkeypatch.setattr(mt5_mod, "em_rollover", lambda _a, _d=None: False)
+    monkeypatch.setattr(
+        mt5_mod,
+        "codigo_vigente",
+        lambda ativo, _dia=None: {"WIN": "WINQ26", "WDO": "WDOU26"}[ativo[:3]],
+    )
+
+
 def _ligar(monkeypatch, terminal) -> MetaTrader5Fonte:
     monkeypatch.setattr(mt5_mod, "_mt5", lambda: terminal)
     fonte = MetaTrader5Fonte()
@@ -241,3 +262,42 @@ def test_desconectar_limpa_os_caches(monkeypatch, sem_espera):
 
     assert fonte._trocados == {}
     assert fonte._seguros == set()
+
+
+def test_na_virada_de_contrato_a_serie_segue_no_continuo(monkeypatch, sem_espera):
+    """O contrato "vigente" na janela de rollover é OUTRO papel, noutro nível de preço.
+
+    Em 10/08/2026 o `codigo_vigente('WIN')` já era `WINV26`, que negociava ~3.500 pontos
+    acima do `WINQ26` — puro custo de carrego. Gravar isso na série `WIN` inventa um gap
+    de 2% que o mercado nunca fez, e ATR, tendência, pivôs e médias passam a ser
+    calculados sobre ele. O pior é que a série continua parecendo normal.
+    """
+    from datetime import date
+
+    monkeypatch.setattr(mt5_mod, "em_rollover", lambda _a, _d=None: True)
+    monkeypatch.setattr(mt5_mod, "vencimento", lambda *_a: date(2026, 8, 12))
+
+    barras = _barras(80, EPOCH_15H20)
+    terminal = TerminalFalso({"WIN$N": [barras] * 3, "WINV26": [barras] * 3})
+
+    fonte = _ligar(monkeypatch, terminal)
+    fonte.ultimos("WIN", Timeframe.M5, 80)
+
+    assert "WINV26" not in terminal.chamadas, "leu o contrato novo durante a virada"
+    assert terminal.chamadas["WIN$N"] >= 1
+
+
+def test_o_aviso_de_rollover_sai_uma_vez_por_ativo(monkeypatch, sem_espera, capsys):
+    """Oito timeframes a cada 30s transformariam o aviso em ruído."""
+    from datetime import date
+
+    monkeypatch.setattr(mt5_mod, "em_rollover", lambda _a, _d=None: True)
+    monkeypatch.setattr(mt5_mod, "vencimento", lambda *_a: date(2026, 8, 12))
+
+    barras = _barras(80, EPOCH_15H20)
+    fonte = _ligar(monkeypatch, TerminalFalso({"WIN$N": [barras] * 9}))
+
+    for _ in range(3):
+        fonte.ultimos("WIN", Timeframe.M5, 80)
+
+    assert capsys.readouterr().err.count("em rollover") == 1
