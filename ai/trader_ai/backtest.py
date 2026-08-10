@@ -346,17 +346,25 @@ def _acumular(
         estatistica.acertos += 1
 
 
-def calibrar(resultado: Resultado, lim: Limiares = PADRAO) -> dict[str, tuple[float, int]]:
-    """Grava as taxas medidas em `padroes.CALIBRACAO` e devolve o que foi gravado.
+def calibrar(resultado: Resultado, lim: Limiares = PADRAO) -> dict[str, tuple[float, int, float]]:
+    """Grava as medições em `padroes.CALIBRACAO` e devolve o que foi gravado.
 
-    A partir daí, `confiabilidade_de()` passa a usar evidência no lugar do prior do
-    ebook — mas só onde a amostra sustenta. Padrões com poucas ocorrências continuam
-    com o prior, marcados como insuficientes.
+    A partir daí, `confiabilidade_de()` passa a usar evidência no lugar do palpite — mas
+    só onde a amostra sustenta. Padrões com poucas ocorrências ficam de fora e valem
+    `confiabilidade_sem_medicao`.
+
+    Guarda a **expectância** junto da taxa de acerto porque as duas discordam com
+    frequência: o `tres_por_dentro_baixa` do WDO acerta 50% e mede −0,300R. Sem a
+    expectância, essa informação não chegaria a lugar nenhum onde pudesse vetar.
     """
-    calibrado: dict[str, tuple[float, int]] = {}
+    calibrado: dict[str, tuple[float, int, float]] = {}
     for padrao_id, estatistica in resultado.por_padrao.items():
         if estatistica.suficiente(lim):
-            calibrado[padrao_id] = (estatistica.taxa_acerto, estatistica.n)
+            calibrado[padrao_id] = (
+                estatistica.taxa_acerto,
+                estatistica.n,
+                estatistica.expectancia_r,
+            )
     padroes.CALIBRACAO.update(calibrado)
     return calibrado
 

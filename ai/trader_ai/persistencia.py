@@ -522,10 +522,13 @@ def carregar_calibracao(ativo: str, timeframe: Timeframe) -> dict[str, tuple[flo
     with conexao() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            SELECT "padraoId", "taxaAcerto", ocorrencias
+            SELECT "padraoId", "taxaAcerto", ocorrencias, "expectanciaR"
             FROM calibracoes_padrao
             WHERE ativo = %s AND timeframe = %s AND suficiente = true
             """,
             (ativo, timeframe.name),
         )
-        return {linha[0]: (float(linha[1]), int(linha[2])) for linha in cur.fetchall()}
+        return {
+            linha[0]: (float(linha[1]), int(linha[2]), float(linha[3]))
+            for linha in cur.fetchall()
+        }

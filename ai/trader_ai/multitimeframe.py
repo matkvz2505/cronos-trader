@@ -39,11 +39,31 @@ class Vies:
     alinhado: bool
     """Os três timeframes concordando entre si."""
 
+    vizinho: Tendencia | None = None
+    """Tendência do MENOR timeframe de viés — o vizinho imediato do gatilho.
+
+    Guardado à parte porque a agregação o apaga. Em 10/08/2026 o WDO marcou
+    `neutra (0%) [15min=alta, 30min=lateral, 60min=baixa]`: alta e baixa se anulam, o
+    viés vira neutro, e neutro liberava qualquer coisa. Duas vendas passaram com o 15min
+    em alta — o timeframe que mais tem a dizer sobre um gatilho de 5 minutos.
+    """
+
     def concorda_com(self, direcao: Direcao) -> bool:
         return self.direcao is not Direcao.NEUTRA and self.direcao is direcao
 
     def contraria(self, direcao: Direcao) -> bool:
         return self.direcao is not Direcao.NEUTRA and self.direcao is direcao.oposta
+
+    def vizinho_contraria(self, direcao: Direcao) -> bool:
+        """O timeframe vizinho aponta para o lado oposto da entrada.
+
+        Serve para o caso em que o agregado é neutro **por discordância**: a média dos
+        votos perde justamente a informação mais próxima do gatilho.
+        """
+        if self.vizinho is None or self.vizinho is Tendencia.LATERAL:
+            return False
+        oposta = Tendencia.BAIXA if direcao is Direcao.ALTA else Tendencia.ALTA
+        return self.vizinho is oposta
 
     def descrever(self) -> str:
         detalhe = ", ".join(f"{tf}={t}" for tf, t in sorted(self.votos.items()))
@@ -89,6 +109,7 @@ def calcular_vies(
     votos: dict[str, str] = {}
     tendencias: list[Tendencia] = []
     forcas: list[float] = []
+    vizinho: Tendencia | None = None
 
     for tf in TIMEFRAMES_DE_VIES:
         serie = series.get(tf)
@@ -101,20 +122,24 @@ def calcular_vies(
         votos[tf.rotulo] = ctx.tendencia.value
         tendencias.append(ctx.tendencia)
         forcas.append(ctx.forca_tendencia)
+        # `TIMEFRAMES_DE_VIES` está em ordem crescente: o primeiro que responde é o
+        # vizinho imediato do gatilho.
+        if vizinho is None:
+            vizinho = ctx.tendencia
 
     if not tendencias:
-        return Vies(Direcao.NEUTRA, 0.0, votos, alinhado=False)
+        return Vies(Direcao.NEUTRA, 0.0, votos, alinhado=False, vizinho=vizinho)
 
     direcionais = [t for t in tendencias if t is not Tendencia.LATERAL]
     if not direcionais:
-        return Vies(Direcao.NEUTRA, 0.0, votos, alinhado=False)
+        return Vies(Direcao.NEUTRA, 0.0, votos, alinhado=False, vizinho=vizinho)
 
     altas = sum(1 for t in direcionais if t is Tendencia.ALTA)
     baixas = len(direcionais) - altas
 
     if altas and baixas:
         # Timeframes brigando entre si é indefinição, não tendência fraca.
-        return Vies(Direcao.NEUTRA, 0.0, votos, alinhado=False)
+        return Vies(Direcao.NEUTRA, 0.0, votos, alinhado=False, vizinho=vizinho)
 
     direcao = Direcao.ALTA if altas else Direcao.BAIXA
     alinhado = len(direcionais) == len(TIMEFRAMES_DE_VIES) == len(tendencias)
@@ -123,14 +148,24 @@ def calcular_vies(
     if not alinhado:
         forca *= len(direcionais) / len(TIMEFRAMES_DE_VIES)
 
-    return Vies(direcao, min(1.0, forca), votos, alinhado)
+    return Vies(direcao, min(1.0, forca), votos, alinhado, vizinho=vizinho)
 
 
 def aplicar(avaliacao: Avaliacao, vies: Vies, lim: Limiares = PADRAO) -> Avaliacao:
     """Reescreve a avaliação do gatilho à luz do viés dos timeframes maiores.
 
-    A favor do viés: bônus. Contra: exige score quase perfeito, senão veta. Neutro:
-    passa sem alteração — não há informação para usar.
+    A favor do viés: bônus. Contra: exige score quase perfeito, senão veta.
+
+    **Neutro não é permissão.** Era, e custou caro: o agregado fica neutro tanto quando
+    não há tendência nenhuma quanto quando os timeframes *discordam entre si*, e os dois
+    casos liberavam qualquer entrada. Em 10/08/2026 o WDO marcou
+    `neutra (0%) [15min=alta, 30min=lateral, 60min=baixa]` e o motor aprovou duas vendas
+    — com o 15min em alta, que é o timeframe com mais a dizer sobre um gatilho de 5min.
+    A média apagou justamente o voto que importava.
+
+    Agora, viés neutro com o vizinho imediato apontando para o outro lado veta. Viés
+    neutro com o vizinho lateral ou a favor continua passando: aí não há objeção, e não
+    inventar uma é tão importante quanto respeitar as que existem.
     """
     direcao = avaliacao.deteccao.direcao
 
@@ -154,6 +189,16 @@ def aplicar(avaliacao: Avaliacao, vies: Vies, lim: Limiares = PADRAO) -> Avaliac
         return replace(
             avaliacao,
             vetos=[*avaliacao.vetos, f"contra o {vies.descrever()}"],
+        )
+
+    if lim.vetar_contra_vizinho and vies.vizinho_contraria(direcao):
+        return replace(
+            avaliacao,
+            vetos=[
+                *avaliacao.vetos,
+                f"viés neutro por discordância, mas o timeframe vizinho está em "
+                f"{vies.vizinho.value} — contra a entrada",
+            ],
         )
 
     return avaliacao

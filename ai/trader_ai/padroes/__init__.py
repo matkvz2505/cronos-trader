@@ -17,12 +17,16 @@ from .base import (
     catalogo_ordenado,
     confiabilidade_de,
     detectar_em,
+    expectancia_medida,
+    foi_medida,
     padrao,
     varrer,
 )
 
 __all__ = [
     "CALIBRACAO",
+    "expectancia_medida",
+    "foi_medida",
     "CATALOGO",
     "PRIOR_ALTA",
     "PRIOR_BAIXA",

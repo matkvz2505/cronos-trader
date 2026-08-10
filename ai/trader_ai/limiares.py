@@ -153,6 +153,27 @@ class Limiares:
     """Contra o viés dos timeframes maiores, só passa sinal quase perfeito.
     Na prática, quase nada passa — e é essa a intenção."""
 
+    vetar_contra_vizinho: bool = True
+    """Viés neutro POR DISCORDÂNCIA veta se o timeframe vizinho contraria a entrada.
+
+    Neutro é ambíguo: pode ser "sem tendência" ou "os timeframes brigam". O segundo caso
+    liberava entrada contra o 15min em alta. É um flag para o backtest medir com e sem."""
+
+    confiabilidade_sem_medicao: float = 0.50
+    """Confiabilidade de padrão que ainda não foi medido NESTE ativo.
+
+    Antes o motor caía no prior do ebook — 0,70 para a Nuvem Negra, por exemplo — e esse
+    número entrava no score como se fosse evidência, além de aparecer na tela escrito
+    "confiabilidade do padrão em WDO: 70%". Não havia uma única medição de Nuvem Negra em
+    WDO. Meio a meio é o que se sabe de um padrão não medido; o prior do ebook continua
+    no catálogo como referência de leitura, não como peso."""
+
+    vetar_expectancia_negativa: bool = True
+    """Padrão com expectância medida negativa e amostra suficiente não emite.
+
+    Hoje a medição só entrava via taxa de acerto no score, onde os outros fatores a
+    diluíam: o `tres_por_dentro_baixa` do WDO mede −0,300R e saiu com score 0,61."""
+
     # ------------------------------------------------------------------
     # Decisão e risco
     # ------------------------------------------------------------------

@@ -72,10 +72,13 @@ class EspecPadrao:
 
 CATALOGO: dict[str, EspecPadrao] = {}
 
-CALIBRACAO: dict[str, tuple[float, int]] = {}
-"""Preenchido pelo backtest: `padrao_id -> (taxa_acerto, n_ocorrencias)`.
+CALIBRACAO: dict[str, tuple[float, int, float]] = {}
+"""Preenchido pelo backtest: `padrao_id -> (taxa_acerto, n_ocorrencias, expectancia_r)`.
 
-Enquanto vazio, todo padrão usa o prior do ebook.
+A expectância entrou junto porque taxa de acerto sozinha não decide nada: um padrão pode
+acertar 55% e perder dinheiro, e o `tres_por_dentro_baixa` do WDO acerta 50% com −0,300R.
+
+Enquanto vazio, todo padrão vale `confiabilidade_sem_medicao` — não o prior do ebook.
 """
 
 
@@ -116,18 +119,41 @@ def padrao(
     return registrar
 
 
+def foi_medida(spec: EspecPadrao, lim: Limiares = PADRAO) -> bool:
+    """Existe medição deste padrão NESTE ativo, com amostra que sustente conclusão."""
+    medida = CALIBRACAO.get(spec.id)
+    return medida is not None and medida[1] >= lim.amostra_minima_confiabilidade
+
+
+def expectancia_medida(spec: EspecPadrao, lim: Limiares = PADRAO) -> float | None:
+    """Expectância em R medida no ativo, ou `None` se não há amostra que sustente."""
+    medida = CALIBRACAO.get(spec.id)
+    if medida is None or len(medida) < 3 or medida[1] < lim.amostra_minima_confiabilidade:
+        return None
+    return medida[2]
+
+
 def confiabilidade_de(spec: EspecPadrao, lim: Limiares = PADRAO) -> float:
-    """Taxa medida quando há amostra suficiente; senão, o prior do ebook.
+    """Taxa medida quando há amostra suficiente; senão, **neutro** — não o ebook.
 
     O piso de amostra existe para não transformar 4 acertos em 3 tentativas numa
     "confiabilidade de 75%" que a tela mostraria como se fosse evidência.
+
+    **Sem medição o retorno é `confiabilidade_sem_medicao` (0,50), e não o prior do
+    ebook.** O prior é um palpite de livro sobre o mercado americano de ações; usá-lo
+    como peso empurra para cima o score de padrões sobre os quais não se sabe nada. Em
+    10/08/2026 a Nuvem Negra entrou numa venda de WDO com "confiabilidade 70%" — número
+    do ebook, zero medições em WDO — e o sinal passou o corte por 0,0003.
+
+    O prior continua no catálogo (`spec.confiabilidade_ebook`) como referência de
+    leitura. O que ele não faz mais é valer ponto.
     """
     medida = CALIBRACAO.get(spec.id)
     if medida is None:
-        return spec.confiabilidade_ebook
-    taxa, n = medida
+        return lim.confiabilidade_sem_medicao
+    taxa, n = medida[0], medida[1]
     if n < lim.amostra_minima_confiabilidade:
-        return spec.confiabilidade_ebook
+        return lim.confiabilidade_sem_medicao
     return taxa
 
 

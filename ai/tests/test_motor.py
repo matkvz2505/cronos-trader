@@ -804,7 +804,9 @@ def test_calibracao_ignora_amostra_insuficiente():
         padroes.CALIBRACAO.clear()
         calibrado = bt.calibrar(resultado)
         assert "harami_alta" not in calibrado  # 3 ocorrências não é evidência
-        assert calibrado["engolfo_alta"] == (pytest.approx(0.6), 50)
+        # A calibração guarda (taxa, n, expectância): acerto sozinho não decide nada.
+        taxa, n, _expectancia = calibrado["engolfo_alta"]
+        assert (taxa, n) == (pytest.approx(0.6), 50)
     finally:
         padroes.CALIBRACAO.clear()
         padroes.CALIBRACAO.update(anterior)

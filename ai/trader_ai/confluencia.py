@@ -383,6 +383,24 @@ def _vetos(deteccao: Deteccao, ctx: Contexto, lim: Limiares) -> list[str]:
     if ctx.atr <= 0:
         motivos.append("ATR indisponivel")
 
+    # Expectância medida negativa mata o sinal, e não só o penaliza.
+    #
+    # Antes a medição entrava apenas como taxa de acerto dentro do score, onde os outros
+    # fatores a diluíam: o `tres_por_dentro_baixa` do WDO mede −0,300R com amostra
+    # suficiente e saiu com score 0,61 numa venda real. Um padrão que já se provou
+    # perdedor NESTE ativo não é um sinal fraco — é um sinal que não deve existir.
+    #
+    # Só dispara com amostra suficiente. Sem medição, `confiabilidade_de` já devolve
+    # neutro em vez do prior do ebook, o que basta.
+    if lim.vetar_expectancia_negativa:
+        from .padroes import CATALOGO, expectancia_medida
+
+        spec = CATALOGO.get(deteccao.padrao_id)
+        if spec is not None:
+            esperada = expectancia_medida(spec, lim)
+            if esperada is not None and esperada < 0:
+                motivos.append(f"expectancia medida negativa neste ativo ({esperada:+.2f}R)")
+
     return motivos
 
 
