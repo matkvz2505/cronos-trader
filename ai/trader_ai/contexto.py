@@ -52,6 +52,13 @@ JANELAS_B3 = (
 )
 """Janelas do pregão em horário de Brasília, com o peso de confluência de cada uma.
 
+⚠️ **Os pesos abaixo estão DESLIGADOS** (`limiares.usar_peso_horario = False`). Aplicá-los
+piora os dois ativos, e a medição é clara: WDO +0,001R → +0,088R e WIN −0,060R → +0,019R
+com eles fora. Peso errado é pior que peso nenhum.
+
+Os rótulos e as faixas continuam valendo — `opera_agora()` ainda usa `opera` para barrar
+pré-abertura e ajuste, e isso não é peso, é horário em que não se abre posição.
+
 **Os pesos abaixo estão pendentes de remedição e não devem ser tratados como evidência.**
 Eles foram calibrados sobre uma base que estava 3 horas deslocada (ver
 `fontes/mt5.py:hora_do_servidor`), então cada peso está preso à janela errada. A medição

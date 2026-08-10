@@ -153,13 +153,31 @@ class Limiares:
     """Contra o viés dos timeframes maiores, só passa sinal quase perfeito.
     Na prática, quase nada passa — e é essa a intenção."""
 
-    usar_peso_horario: bool = True
-    """Aplica o peso da janela do pregão no score.
+    usar_peso_horario: bool = False
+    """Aplica o peso da janela do pregão no score. **Desligado, e é a única mudança de
+    hoje que a medição aprovou.**
 
-    **Os pesos atuais são suspeitos.** Foram calibrados sobre a base que estava 3 horas
-    deslocada, então cada peso ficou preso à janela errada — o 1,15 que eu dei à
-    "tendência da manhã" foi medido sobre operações que aconteceram no meio da tarde.
-    Desligar é a forma de perguntar se eles ajudam ou atrapalham, em vez de assumir."""
+    Os pesos foram calibrados sobre a base que estava 3 horas deslocada: cada um ficou
+    preso à janela errada. O 1,15 que eu dei à "tendência da manhã" premiava operações que
+    de fato aconteciam no meio da tarde. **Peso errado é pior que peso nenhum** — ele não
+    só deixa de ajudar, ele empurra o score na direção errada de forma sistemática.
+
+    Walk-forward de 4 janelas, 60.000 candles por ativo:
+
+        WDO   +0,001R  ->  +0,088R
+        WIN   -0,060R  ->  +0,019R
+
+    O que dá crédito a este resultado, e não ao R:R 2,5 que também melhorou os dois:
+
+    - **Hipótese pré-registrada.** A contaminação era conhecida antes de medir, desde a
+      correção do fuso. Não é o melhor número de uma varredura.
+    - **O `n` quase não muda** (254→247, 297→300): não é efeito de filtro, é remoção de
+      distorção. Uma melhora que vem junto com queda grande de amostra costuma ser só
+      sobrevivência dos sortudos.
+    - **Mecanismo explicável**, e a explicação prevê o sinal do efeito.
+
+    Ficam desligados até serem **remedidos** sobre a base corrigida. Voltar a ligá-los com
+    os números antigos seria reintroduzir o bug de fuso pela porta dos fundos."""
 
     vetar_contra_vizinho: bool = False
     """Viés neutro POR DISCORDÂNCIA veta se o timeframe vizinho contraria a entrada.

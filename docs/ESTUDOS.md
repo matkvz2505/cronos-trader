@@ -18,20 +18,23 @@ python scripts/experimento.py --ativos WDO WIN      # isola uma regra por vez
 
 ## 0. Onde o motor está — leia antes de qualquer outra coisa
 
-**Não há edge.** Walk-forward de 4 janelas sobre 60.000 candles de cada ativo, com a base
-já corrigida de fuso:
+Walk-forward de 4 janelas sobre 60.000 candles de cada ativo, base corrigida de fuso:
 
-| | expectância fora da amostra | operações |
-|---|---|---|
-| WDO | **+0,001R** | 254 |
-| WIN | **−0,060R** | 297 |
+| | antes de 10/08 | **hoje** | operações |
+|---|---|---|---|
+| WDO | +0,001R | **+0,088R** | 247 |
+| WIN | −0,060R | **+0,019R** | 300 |
 
-Nenhuma das oito configurações testadas em 10/08/2026 criou vantagem. O produto serve para
-**estudar** o critério — ver a recusa, a conta e a tese — não para operar dinheiro real.
+A diferença é **uma coisa só**: desligar o peso de janela do pregão. Ver §0.2.
+
+**Expectância positiva em R ainda não é lucro.** Nas mesmas janelas o resultado em dinheiro
+é **−R$ 2.329 (WDO)** e **−R$ 856 (WIN)**: o custo por contrato consome a vantagem em
+pontos. O motor saiu de "sem vantagem" para "vantagem menor que o custo", que é progresso
+real e não é permissão para operar.
 
 Um número que circulou antes e estava errado: **+0,04R em WIN**. Foi medido sobre a base
-deslocada 3 horas, e o deslocamento entrava no score por dentro, via peso de janela do
-pregão. Com o fuso corrigido, vira −0,060R. Não era vantagem, era artefato.
+deslocada 3 horas — e o deslocamento entrava no score justamente pelo peso de janela. Não
+era vantagem, era artefato. O que existe agora foi medido depois da correção.
 
 ---
 
@@ -82,10 +85,41 @@ tela** era mentira, e isso se conserta na apresentação. Hoje a tese escreve *"
 em WDO: 42% em 38 operações"* ou *"confiabilidade estimada pelo ebook — ainda SEM medição
 em WDO"*, conforme `foi_medida()`.
 
-**R:R 2,5 — não adotado, apesar de melhorar os dois.** É o único ponto em que o WDO fica
-positivo. Mas a sequência 1,5 → 2,0 → 2,5 dá +0,001 → −0,030 → +0,034: **não é monotônica**.
-Se subir o R:R ajudasse de verdade, o 2,0 estaria entre os dois. Não está — a assinatura é
-de ruído, e adotar o melhor número da tabela é exatamente o erro que a regra acima proíbe.
+**R:R 2,5 — não adotado, apesar de melhorar os dois.** Mas a sequência 1,5 → 2,0 → 2,5 dá
++0,001 → −0,030 → +0,034: **não é monotônica**. Se subir o R:R ajudasse de verdade, o 2,0
+estaria entre os dois. Não está — a assinatura é de ruído, e adotar o melhor número da
+tabela é exatamente o erro que a regra acima proíbe.
+
+---
+
+## 0.2 O peso da janela do pregão — a única mudança aprovada
+
+| experimento | WDO | n | WIN | n |
+|---|---|---|---|---|
+| base | +0,001R | 254 | −0,060R | 297 |
+| **sem peso de horário** | **+0,088R** | 247 | **+0,019R** | 300 |
+| sem peso + R:R 2,0 | +0,075R | 244 | −0,041R | 278 |
+
+**Peso errado é pior que peso nenhum.** Os pesos (0,85 abertura · 1,15 manhã · 0,60 almoço
+· 1,15 tarde) foram calibrados sobre a base deslocada 3 horas, então cada um ficou preso à
+janela errada — o 1,15 da "manhã" premiava operações que aconteciam no meio da tarde. Um
+peso assim não deixa apenas de ajudar: empurra o score na direção errada de forma
+sistemática, em todo candle.
+
+Três coisas dão crédito a este resultado, e é o contraste com o R:R 2,5 que as torna
+visíveis:
+
+1. **Hipótese pré-registrada.** A contaminação era conhecida antes de medir, desde a
+   correção do fuso em 07/08. Não saiu de uma varredura.
+2. **O `n` quase não muda** (254→247, 297→300). Melhora acompanhada de queda grande de
+   amostra costuma ser sobrevivência dos sortudos; aqui as mesmas operações renderam mais.
+3. **Mecanismo explicável que prevê o sinal do efeito** — e o efeito veio no sinal previsto,
+   nos dois ativos.
+
+Os pesos ficam **desligados até serem remedidos** sobre a base corrigida. Religá-los com os
+números antigos seria reintroduzir o bug de fuso pela porta dos fundos. As faixas e os
+rótulos continuam valendo: `opera_agora()` ainda barra pré-abertura e ajuste, e isso é
+horário em que não se abre posição, não nota de confluência.
 
 ---
 

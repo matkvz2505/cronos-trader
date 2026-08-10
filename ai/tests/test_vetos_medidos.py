@@ -170,3 +170,63 @@ def test_expectancia_sem_amostra_nao_e_reportada(calibracao_limpa):
     spec = padroes.CATALOGO["tres_por_dentro_baixa"]
     padroes.CALIBRACAO["tres_por_dentro_baixa"] = (0.5, 2, -0.300)
     assert expectancia_medida(spec) is None
+
+
+# ---------------------------------------------------------------------------
+# 4. Peso de janela do pregão — a única mudança que a medição aprovou
+# ---------------------------------------------------------------------------
+
+
+def test_peso_de_horario_vem_desligado():
+    """Peso errado é pior que peso nenhum, e este estava preso à janela errada.
+
+    Os pesos foram calibrados sobre a base deslocada 3h: o 1,15 da "manhã" premiava
+    operações que aconteciam no meio da tarde. Desligá-los levou WDO de +0,001R para
+    +0,088R e WIN de −0,060R para +0,019R — os dois ativos, mesmo sinal, com o número de
+    operações praticamente igual (254→247, 297→300). Não foi filtro; foi tirar distorção.
+    """
+    assert PADRAO.usar_peso_horario is False
+
+
+def test_com_peso_desligado_o_contexto_reporta_neutro():
+    """O peso sai do score, mas o rótulo da janela continua — é informação, não nota."""
+    from datetime import datetime
+
+    from trader_ai import contexto as ctx_mod
+    from trader_ai.tipos import Candle, Serie, Timeframe
+
+    candles = [
+        Candle(
+            ts=datetime(2026, 8, 10, 10, 0),
+            abertura=100.0,
+            maxima=101.0,
+            minima=99.0,
+            fechamento=100.5,
+            volume=10.0,
+        )
+    ]
+    ctx = ctx_mod.ler(Serie("WDO", Timeframe.M5, candles), 0)
+    assert ctx.peso_horario == 1.0
+    assert ctx.janela_pregao == "manha", "o rótulo da janela não pode sumir junto"
+
+
+def test_o_peso_volta_se_alguem_remedir():
+    """A porta fica aberta para quem recalibrar sobre a base corrigida."""
+    from datetime import datetime
+
+    from trader_ai import contexto as ctx_mod
+    from trader_ai.tipos import Candle, Serie, Timeframe
+
+    candles = [
+        Candle(
+            ts=datetime(2026, 8, 10, 10, 0),
+            abertura=100.0,
+            maxima=101.0,
+            minima=99.0,
+            fechamento=100.5,
+            volume=10.0,
+        )
+    ]
+    lim = replace(PADRAO, usar_peso_horario=True)
+    ctx = ctx_mod.ler(Serie("WDO", Timeframe.M5, candles), 0, lim)
+    assert ctx.peso_horario == 1.15
