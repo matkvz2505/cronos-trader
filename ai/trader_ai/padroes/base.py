@@ -148,12 +148,17 @@ def confiabilidade_de(spec: EspecPadrao, lim: Limiares = PADRAO) -> float:
     O prior continua no catálogo (`spec.confiabilidade_ebook`) como referência de
     leitura. O que ele não faz mais é valer ponto.
     """
+    sem_medicao = (
+        spec.confiabilidade_ebook
+        if lim.confiabilidade_sem_medicao is None
+        else lim.confiabilidade_sem_medicao
+    )
     medida = CALIBRACAO.get(spec.id)
     if medida is None:
-        return lim.confiabilidade_sem_medicao
+        return sem_medicao
     taxa, n = medida[0], medida[1]
     if n < lim.amostra_minima_confiabilidade:
-        return lim.confiabilidade_sem_medicao
+        return sem_medicao
     return taxa
 
 

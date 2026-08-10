@@ -49,10 +49,16 @@ def _avaliacao(direcao=Direcao.BAIXA, score=0.5):
 
 
 def test_neutro_com_vizinho_contrario_veta():
-    """O caso exato de 10/08: venda com o 15min em alta."""
+    """O caso exato de 10/08: venda com o 15min em alta.
+
+    A regra existe e funciona — mas vem DESLIGADA por padrão, porque o walk-forward a
+    reprovou nos dois ativos (WDO −0,036R, WIN −0,015R). Este teste liga explicitamente:
+    ele guarda o mecanismo, não a decisão de usá-lo.
+    """
+    lim = replace(PADRAO, vetar_contra_vizinho=True)
     vies = _vies(Direcao.NEUTRA, {"15min": "alta", "30min": "lateral", "60min": "baixa"},
                  vizinho=Tendencia.ALTA)
-    saida = mtf.aplicar(_avaliacao(Direcao.BAIXA), vies)
+    saida = mtf.aplicar(_avaliacao(Direcao.BAIXA), vies, lim)
     assert saida.vetos, "venda passou com o timeframe vizinho em alta"
     assert "vizinho" in saida.vetos[0]
 
@@ -68,11 +74,16 @@ def test_neutro_com_vizinho_lateral_continua_passando():
     assert not mtf.aplicar(_avaliacao(Direcao.BAIXA), vies).vetos
 
 
-def test_o_veto_do_vizinho_pode_ser_desligado_para_medicao():
-    """É um flag para o walk-forward medir com e sem — não uma verdade assumida."""
+def test_o_veto_do_vizinho_vem_desligado_por_padrao():
+    """O padrão é o que a medição escolheu, não o que a intuição sugeriu.
+
+    Foi a lição mais cara do dia: a regra é razoável, o caso que a motivou é real, e
+    mesmo assim ela piora os dois ativos. Provavelmente porque o timeframe vizinho
+    contrariar o gatilho é a assinatura de um pullback — que é onde entrada de reversão
+    nasce. O veto matava o setup junto com o erro.
+    """
     vies = _vies(Direcao.NEUTRA, {"15min": "alta"}, vizinho=Tendencia.ALTA)
-    lim = replace(PADRAO, vetar_contra_vizinho=False)
-    assert not mtf.aplicar(_avaliacao(Direcao.BAIXA), vies, lim).vetos
+    assert not mtf.aplicar(_avaliacao(Direcao.BAIXA), vies).vetos
 
 
 def test_vies_direcional_contrario_continua_vetando():
@@ -100,21 +111,36 @@ def calibracao_limpa():
     padroes.CALIBRACAO.update(anterior)
 
 
-def test_padrao_sem_medicao_vale_neutro_e_nao_o_prior(calibracao_limpa):
-    """A Nuvem Negra entrou numa venda de WDO com "confiabilidade 70%" do ebook.
+def test_sem_medicao_o_padrao_usa_o_prior_do_ebook(calibracao_limpa):
+    """Achatar para 0,50 parecia mais honesto. A medição discordou.
 
-    Não havia uma única medição dela em WDO. O prior é palpite de livro sobre ações
-    americanas; usá-lo como peso empurra para cima o score de quem não se conhece.
+    Custou −0,076R no WDO, e o mecanismo aparece na contagem: 254 → 382 sinais. A regra
+    não filtrou, **re-ranqueou** — vários padrões disparam no mesmo candle e
+    `confluencia.melhor()` escolhe um; com todas as confiabilidades iguais o desempate
+    muda, e passa a escolher pior.
+
+    O que era mentira e continua consertado é a APRESENTAÇÃO: `foi_medida()` existe para
+    a tela nunca mais escrever "confiabilidade medida em WDO" sobre um palpite de livro.
     """
     spec = padroes.CATALOGO["nuvem_negra"]
-    assert spec.confiabilidade_ebook > 0.6, "o prior do ebook é alto — é esse o problema"
-    assert confiabilidade_de(spec) == PADRAO.confiabilidade_sem_medicao
+    assert spec.confiabilidade_ebook > 0.6
+    assert confiabilidade_de(spec) == spec.confiabilidade_ebook
+    assert not padroes.foi_medida(spec), "sem medição, a tela não pode dizer 'medido'"
 
 
-def test_amostra_insuficiente_tambem_vale_neutro(calibracao_limpa):
+def test_confiabilidade_achatada_continua_disponivel(calibracao_limpa):
+    """A hipótese fica testável para quem mexer no desempate do `melhor()`."""
+    spec = padroes.CATALOGO["nuvem_negra"]
+    lim = replace(PADRAO, confiabilidade_sem_medicao=0.50)
+    assert confiabilidade_de(spec, lim) == 0.50
+
+
+def test_amostra_insuficiente_nao_conta_como_medicao(calibracao_limpa):
+    """Três ocorrências não medem nada — e a tela não pode dizer que mediram."""
     spec = padroes.CATALOGO["nuvem_negra"]
     padroes.CALIBRACAO["nuvem_negra"] = (0.9, 3, 1.5)
-    assert confiabilidade_de(spec) == PADRAO.confiabilidade_sem_medicao
+    assert confiabilidade_de(spec) == spec.confiabilidade_ebook
+    assert not padroes.foi_medida(spec)
 
 
 def test_medicao_com_amostra_manda(calibracao_limpa):

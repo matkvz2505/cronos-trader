@@ -136,7 +136,7 @@ def ler(serie: Serie, i: int, lim: Limiares = PADRAO) -> Contexto:
             atr=atr_i,
             regime_volatilidade=regime,
             janela_pregao=janela.rotulo,
-            peso_horario=janela.peso,
+            peso_horario=(janela.peso if lim.usar_peso_horario else 1.0),
             indice=i,
         )
 
@@ -169,7 +169,7 @@ def ler(serie: Serie, i: int, lim: Limiares = PADRAO) -> Contexto:
         atr=atr_i,
         regime_volatilidade=regime,
         janela_pregao=janela.rotulo,
-        peso_horario=janela.peso,
+        peso_horario=(janela.peso if lim.usar_peso_horario else 1.0),
         indice=i,
     )
 

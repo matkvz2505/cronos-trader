@@ -126,8 +126,13 @@ def catalogo() -> dict:
                     s.tendencia_requerida.value if s.tendencia_requerida else None
                 ),
                 "confiabilidade_ebook": s.confiabilidade_ebook,
-                "confiabilidade_medida": padroes.CALIBRACAO.get(s.id, (None, 0))[0],
-                "ocorrencias_medidas": padroes.CALIBRACAO.get(s.id, (None, 0))[1],
+                # `foi_medida` é o que separa evidência de palpite. Sem ele a tela
+                # escreveu "confiabilidade do padrão em WDO: 70%" para a Nuvem Negra,
+                # que nunca foi medida em WDO uma única vez — o 70% era do ebook.
+                "medido": padroes.foi_medida(s),
+                "confiabilidade_medida": padroes.CALIBRACAO.get(s.id, (None, 0, 0.0))[0],
+                "ocorrencias_medidas": padroes.CALIBRACAO.get(s.id, (None, 0, 0.0))[1],
+                "expectancia_medida": padroes.expectancia_medida(s),
                 "pagina_ebook": s.pagina_ebook,
                 "exige_gap": s.exige_gap,
                 "derivado_por_simetria": s.derivado_por_simetria,

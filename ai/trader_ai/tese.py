@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from . import padroes as padroes_mod
 from .confluencia import Avaliacao
 from .decisao import Sinal
 from .instrumentos import resolver
@@ -144,10 +145,25 @@ def _porque(sinal: Sinal, avaliacao: Avaliacao) -> list[str]:
             continue
         razoes.append(f"{_fator_legivel(f.nome)}: {f.detalhe} (×{f.multiplicador:.2f})")
 
+    # A frase muda conforme o número seja medido ou palpite — e a distinção não é
+    # detalhe de redação. Em 10/08/2026 a tese de uma venda de WDO trouxe
+    # "confiabilidade do padrão em WDO: 70%" para a Nuvem Negra, que nunca foi medida em
+    # WDO. O operador lê 70% como evidência; era o prior de um livro sobre ações
+    # americanas. O trade irmão dessa tese foi estopado.
     if sinal.confiabilidade >= 0.5:
-        razoes.append(
-            f"confiabilidade do padrão em {sinal.ativo}: {sinal.confiabilidade:.0%}"
-        )
+        spec = CATALOGO.get(sinal.padrao_id)
+        medido = spec is not None and padroes_mod.foi_medida(spec)
+        if medido:
+            n = padroes_mod.CALIBRACAO[sinal.padrao_id][1]
+            razoes.append(
+                f"acerto medido em {sinal.ativo}: {sinal.confiabilidade:.0%} "
+                f"em {n} operações"
+            )
+        else:
+            razoes.append(
+                f"confiabilidade estimada pelo ebook: {sinal.confiabilidade:.0%} "
+                f"— ainda SEM medição em {sinal.ativo}"
+            )
 
     risco = f"{sinal.risco_pontos:,.0f}".replace(",", ".")
     retorno = f"{sinal.retorno_pontos:,.0f}".replace(",", ".")

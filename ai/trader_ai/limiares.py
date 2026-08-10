@@ -153,20 +153,55 @@ class Limiares:
     """Contra o viés dos timeframes maiores, só passa sinal quase perfeito.
     Na prática, quase nada passa — e é essa a intenção."""
 
-    vetar_contra_vizinho: bool = True
+    usar_peso_horario: bool = True
+    """Aplica o peso da janela do pregão no score.
+
+    **Os pesos atuais são suspeitos.** Foram calibrados sobre a base que estava 3 horas
+    deslocada, então cada peso ficou preso à janela errada — o 1,15 que eu dei à
+    "tendência da manhã" foi medido sobre operações que aconteceram no meio da tarde.
+    Desligar é a forma de perguntar se eles ajudam ou atrapalham, em vez de assumir."""
+
+    vetar_contra_vizinho: bool = False
     """Viés neutro POR DISCORDÂNCIA veta se o timeframe vizinho contraria a entrada.
 
-    Neutro é ambíguo: pode ser "sem tendência" ou "os timeframes brigam". O segundo caso
-    liberava entrada contra o 15min em alta. É um flag para o backtest medir com e sem."""
+    **Desligado porque a medição o reprovou.** A ideia era boa e o caso que a motivou era
+    real — em 10/08/2026 o motor vendeu WDO com o 15min em alta, e o trade foi estopado.
+    Mas no walk-forward a regra piora os DOIS ativos: WDO −0,036R, WIN −0,015R. Consistente
+    nos dois, que é exatamente o critério para acreditar num efeito — e aqui o efeito é
+    negativo.
 
-    confiabilidade_sem_medicao: float = 0.50
+    A leitura provável: o 15min contrariar o gatilho é comum em pullback, e pullback é
+    onde entrada de reversão nasce. O veto matava o setup junto com o erro.
+
+    Fica no código, desligado, porque a hipótese é razoável e pode voltar a ser testada
+    com outra definição de "vizinho contrário" — força mínima, por exemplo."""
+
+    confiabilidade_sem_medicao: float | None = None
     """Confiabilidade de padrão que ainda não foi medido NESTE ativo.
 
     Antes o motor caía no prior do ebook — 0,70 para a Nuvem Negra, por exemplo — e esse
     número entrava no score como se fosse evidência, além de aparecer na tela escrito
     "confiabilidade do padrão em WDO: 70%". Não havia uma única medição de Nuvem Negra em
     WDO. Meio a meio é o que se sabe de um padrão não medido; o prior do ebook continua
-    no catálogo como referência de leitura, não como peso."""
+    no catálogo como referência de leitura, não como peso.
+
+    **`None` (usar o prior do ebook) é o padrão, porque a medição mandou.** Achatar para
+    0,50 custou −0,076R no WDO, e o mecanismo aparece no número de sinais: 254 → 382. A
+    regra não filtrou, **re-ranqueou**. Vários padrões disparam no mesmo candle e
+    `confluencia.melhor()` escolhe um; com todas as confiabilidades iguais, o desempate
+    passa a ser feito pelos outros fatores e o padrão escolhido muda — para pior.
+
+    Isso separa duas coisas que eu tinha juntado:
+
+    - **Usar o prior como peso** é uma escolha de modelagem, e a medição diz que ela
+      seleciona melhor do que não ter informação nenhuma. Fica.
+    - **Chamar o prior de "confiabilidade medida em WDO" na tela** era mentira, e
+      continua sendo. Isso se conserta na apresentação, não no score — ver
+      `foi_medida()`, que é o que a tela deve consultar antes de escrever "medido".
+
+    O valor numérico (0,50) segue disponível para quem quiser re-testar a hipótese junto
+    de uma mudança no critério de desempate do `melhor()`, que é o que realmente
+    quebrou."""
 
     vetar_expectancia_negativa: bool = True
     """Padrão com expectância medida negativa e amostra suficiente não emite.
