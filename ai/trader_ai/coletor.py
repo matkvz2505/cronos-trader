@@ -108,19 +108,25 @@ def ciclo(fonte, ativos: list[str], capital: float, barras: int, verboso: bool) 
             # para formar o viés e alimentar o gráfico — emitir sinal em todos eles
             # geraria quatro versões do mesmo trade.
             if tf is Timeframe.M5:
-                # Na virada de contrato o motor continua lendo — o gráfico e o viés
-                # seguem úteis — mas não emite entrada. Operar o contrato que vence é
-                # operar book vazio, e o que tem liquidez negocia noutro nível de preço.
-                # É a mesma regra que o backtest aplica ao descartar a janela; o que
-                # faltava era o tempo real aplicá-la também.
-                if em_rollover(ativo, serie[-1].ts.date()):
-                    if verboso:
-                        print(f"  {ativo} em rollover — sinais suspensos até a virada")
-                    continue
-
                 analise = analisar(serie, capital=capital, ultimos=30)
                 vies = analise.vies.descrever() if analise.vies else None
-                novos = persistencia.gravar_sinais(analise.sinais, vies, analise.teses)
+
+                # A análise SEMPRE roda e as detecções SEMPRE são gravadas — é delas que
+                # vivem o gráfico anotado, a Sala e a vigilância. O que a virada de
+                # contrato suspende é só a emissão de entrada: operar o contrato que
+                # vence é operar book vazio, e o que tem liquidez negocia noutro nível de
+                # preço. Mesma regra que o backtest aplica ao descartar a janela.
+                #
+                # Suspender a análise inteira aqui deixaria o ativo cego na tela por dois
+                # dias, sem que nada indicasse o motivo — foi o que aconteceu em 10/08.
+                emitir = not em_rollover(ativo, serie[-1].ts.date())
+
+                novos = 0
+                if emitir:
+                    novos = persistencia.gravar_sinais(analise.sinais, vies, analise.teses)
+                elif verboso:
+                    print(f"  {ativo} em rollover — {len(analise.sinais)} sinal(is) não emitido(s)")
+
                 persistencia.gravar_deteccoes(ativo, tf, analise.deteccoes, serie)
                 mudancas = persistencia.atualizar_sinais_abertos(ativo, tf, serie)
 
@@ -133,7 +139,7 @@ def ciclo(fonte, ativos: list[str], capital: float, barras: int, verboso: bool) 
                         partes.append(", ".join(f"{k}={v}" for k, v in mudancas.items()))
                     print(f"  [{marca}] {ativo} {tf.rotulo}: {' · '.join(partes)}")
 
-                for sinal in analise.sinais[-3:]:
+                for sinal in (analise.sinais[-3:] if emitir else []):
                     # ASCII puro: o console do Windows roda em CP1252 e um `→` aqui
                     # levantava UnicodeEncodeError, que o catch-all do laço transformava
                     # em "erro no ciclo" — e o ciclo inteiro morria por causa de uma seta.
