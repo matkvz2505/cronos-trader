@@ -127,6 +127,27 @@ mercadoRoutes.get(
   }),
 );
 
+/**
+ * A leitura da IA sobre o dossiê do motor.
+ *
+ * Rota separada de `/raciocinio` de propósito: a narrativa custa dezenas de milhares de
+ * tokens e alguns segundos, enquanto o dossiê é instantâneo. Juntá-las faria a Sala
+ * inteira esperar pelo gateway de LLM — e a Sala precisa abrir com o gateway fora.
+ */
+mercadoRoutes.get(
+  '/narrativa',
+  autenticar,
+  validarQuery(z.object({ ativo: ativoSchema })),
+  assincrono(async (req, res) => {
+    const usuario = await prisma.usuario.findUnique({
+      where: { id: req.usuario!.sub },
+      select: { capital: true },
+    });
+    const { ativo } = req.query as unknown as { ativo: string };
+    res.json(await ia.narrativa(ativo, Number(usuario?.capital ?? 20_000)));
+  }),
+);
+
 const pregaoQuery = z.object({
   ativo: ativoSchema.default('WIN'),
   // `AAAA-MM-DD`. Não é `coerce.date()` de propósito: o `ts` do candle é relógio de parede

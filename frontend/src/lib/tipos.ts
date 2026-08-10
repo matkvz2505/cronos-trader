@@ -366,6 +366,23 @@ export interface Pregao {
   entradas: EntradaPregao[];
 }
 
+/**
+ * A leitura da IA sobre o dossiê do motor.
+ *
+ * `disponivel: false` não é erro — é o gateway fora, e a tela segue inteira sem isto.
+ */
+export interface Narrativa {
+  disponivel: boolean;
+  motivo?: string;
+  leitura: string;
+  contra: string[];
+  /** Onde a tese não bate com o que foi medido. Vazio é o resultado esperado. */
+  incoerencias: string[];
+  atencao: string[];
+  modelo: string;
+  tokens: number;
+}
+
 export interface ResumoSinais {
   abertos: number;
   emitidosHoje: number;

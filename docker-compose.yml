@@ -130,6 +130,12 @@ services:
       DATABASE_URL: postgresql://trader:trader@postgres:5432/cronos_trader
       PORTA_IA: 1841
       EM_CONTAINER: 1
+      # A camada de IA (`agentes.py`) fala com o gateway pela rede do compose. Sem estas
+      # duas o motor tentaria `localhost:4000` de dentro do container e a narrativa
+      # nunca sairia — que foi, literalmente, o estado até 10/08/2026: o painel de
+      # Request Logs do LiteLLM marcava zero requisições porque nada apontava para ele.
+      LITELLM_URL: http://litellm:4000
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-cronos-trader-dev}
     ports:
       - '1841:1841'
     networks: [cronos-net]

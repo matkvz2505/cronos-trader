@@ -175,6 +175,45 @@ def rota_diario(pedido: PedidoDiario) -> dict:
     }
 
 
+class PedidoNarrativa(BaseModel):
+    ativo: Literal["WIN", "WDO"]
+    capital: float = Field(default=20_000.0, gt=0)
+    modelo: str = "principal"
+
+
+@app.post("/narrativa")
+def rota_narrativa(pedido: PedidoNarrativa) -> dict:
+    """A leitura da IA sobre o dossiê que o motor já produziu.
+
+    **Degrada em silêncio, de propósito.** Devolve `disponivel: false` com o motivo em vez
+    de erro HTTP: a narrativa é acréscimo sobre uma tela que funciona inteira sem ela, e
+    derrubar a Sala porque a OpenRouter oscilou seria trocar um enfeite por um defeito.
+    """
+    from . import agentes
+    from . import raciocinio as rac
+
+    if not persistencia.disponivel():
+        raise HTTPException(503, "DATABASE_URL não configurada no serviço de IA")
+
+    series = {}
+    for tf in rac.TIMEFRAMES_PAINEL:
+        serie = persistencia.ler_candles(pedido.ativo, tf, limite=1500)
+        if len(serie) >= PADRAO.tendencia_min_candles:
+            series[tf] = serie
+
+    if Timeframe.M5 not in series:
+        raise HTTPException(422, f"histórico de 5 minutos insuficiente para {pedido.ativo}")
+
+    dados = rac.para_dict(rac.ler(series, pedido.capital))
+
+    try:
+        narrativa = agentes.narrar(dados, modelo=pedido.modelo)
+    except agentes.IAIndisponivel as erro:
+        return {"disponivel": False, "motivo": str(erro)[:300], "ativo": pedido.ativo}
+
+    return {"disponivel": True, "ativo": pedido.ativo, **narrativa.para_dict()}
+
+
 class PedidoPregao(BaseModel):
     ativo: Literal["WIN", "WDO"]
     dia: str | None = None

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
 import { CartaoSinal } from '../components/CartaoSinal';
+import { LeituraDaIA } from '../components/LeituraDaIA';
 import { Alerta, Carregando } from '../components/ui';
 import { api } from '../lib/api';
 import { dataHora, preco } from '../lib/formato';
@@ -134,6 +135,8 @@ export function Sala() {
       {raciocinio && (
         <>
           <Veredito raciocinio={raciocinio} sinais={sinaisDoAtivo} />
+
+          <LeituraDaIA ativo={ativo} />
 
           <div className="grid gap-5 xl:grid-cols-[1.35fr_1fr]">
             <div className="space-y-5">

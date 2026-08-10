@@ -98,6 +98,18 @@ export const ia = {
       body: JSON.stringify({ ativo, dia: dia ?? null }),
     }),
 
+  /**
+   * A leitura da IA sobre o dossiê que o motor já produziu.
+   *
+   * Nunca lança: o motor responde `disponivel: false` com o motivo quando o gateway está
+   * fora. A narrativa é acréscimo sobre uma tela que funciona inteira sem ela.
+   */
+  narrativa: (ativo: string, capital: number) =>
+    chamar<Record<string, unknown>>('/narrativa', {
+      method: 'POST',
+      body: JSON.stringify({ ativo, capital }),
+    }),
+
   /** O que o motor está pensando agora — alimenta a Sala de Operações. */
   raciocinio: (ativo: string, capital: number) =>
     chamar<Record<string, unknown>>('/raciocinio', {
