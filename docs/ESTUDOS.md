@@ -11,7 +11,81 @@ cd ai
 python scripts/estudo_fibonacci.py dados/WDO_M5_real.csv --ativo WDO --tf M5
 python scripts/estudo_estrutura.py dados/WIN_M5_real.csv --ativo WIN --tf M5
 python scripts/funil.py dados/WIN_M5_real.csv --ativo WIN --tf M5
+python scripts/experimento.py --ativos WDO WIN      # isola uma regra por vez
 ```
+
+---
+
+## 0. Onde o motor está — leia antes de qualquer outra coisa
+
+**Não há edge.** Walk-forward de 4 janelas sobre 60.000 candles de cada ativo, com a base
+já corrigida de fuso:
+
+| | expectância fora da amostra | operações |
+|---|---|---|
+| WDO | **+0,001R** | 254 |
+| WIN | **−0,060R** | 297 |
+
+Nenhuma das oito configurações testadas em 10/08/2026 criou vantagem. O produto serve para
+**estudar** o critério — ver a recusa, a conta e a tese — não para operar dinheiro real.
+
+Um número que circulou antes e estava errado: **+0,04R em WIN**. Foi medido sobre a base
+deslocada 3 horas, e o deslocamento entrava no score por dentro, via peso de janela do
+pregão. Com o fuso corrigido, vira −0,060R. Não era vantagem, era artefato.
+
+---
+
+## 0.1 Como uma regra entra no motor
+
+A regra de decisão, escrita depois de errar: **uma mudança só é adotada se o efeito
+aparecer nos DOIS ativos.** WIN e WDO são mercados diferentes; o que é real tende a
+aparecer nos dois, o que é ruído aparece num só e some no outro.
+
+E um corolário que custou caro: **não se adota a configuração que deu o melhor número no
+teste.** Escolher pelo conjunto de teste transforma o teste em treino — é a mesma
+memorização que o walk-forward existe para impedir, uma camada acima e muito mais difícil
+de enxergar depois. `scripts/experimento.py` produz a tabela; a leitura é humana.
+
+### O caso de 10/08/2026: três correções "óbvias", duas reprovadas
+
+O motor aprovou duas vendas de WDO numa alta — uma foi estopada, a outra expirou. A
+auditoria achou três defeitos reais e eu corrigi os três de uma vez. O conjunto piorou o
+WDO de −0,027R para −0,092R, e "o conjunto piorou" não diz qual das três custou. Daí a
+matriz:
+
+| experimento | WDO | n | WIN | n |
+|---|---|---|---|---|
+| **base** | **+0,001R** | 254 | −0,060R | 297 |
+| só veto do vizinho | −0,035R (−0,036) | 231 | −0,075R (−0,015) | 264 |
+| só veto de expectância | −0,003R (−0,004) | 247 | −0,048R (+0,012) | 290 |
+| só confiabilidade neutra | −0,075R (−0,076) | **382** | −0,066R (−0,006) | 391 |
+| as três juntas | −0,073R | 325 | −0,078R | 327 |
+| base + R:R 2,0 | −0,030R (−0,031) | 250 | −0,074R (−0,014) | 298 |
+| base + R:R 2,5 | +0,034R (+0,033) | 181 | −0,017R (+0,043) | 202 |
+| base + score 0,55 | −0,066R (−0,067) | 172 | −0,023R (+0,037) | 212 |
+
+**Veto do vizinho — reprovado.** A ideia: viés neutro *por discordância* não deveria
+liberar entrada contra o timeframe vizinho. O caso que a motivou era real. Piora os dois
+ativos. A leitura provável é que o 15min contrariar o gatilho é a assinatura de um
+**pullback**, que é onde entrada de reversão nasce — o veto matava o setup junto com o
+erro. Ficou no código, desligado (`vetar_contra_vizinho`).
+
+**Confiabilidade neutra — revertida.** A ideia: padrão sem medição no ativo não deveria
+usar o prior do ebook como peso. Custou −0,076R no WDO, e o mecanismo está no `n`:
+**254 → 382**. Não filtrou, **re-ranqueou** — vários padrões disparam no mesmo candle e
+`confluencia.melhor()` escolhe um; achatando todas as confiabilidades, o desempate muda e
+passa a escolher pior.
+
+O episódio separou duas coisas que eu tinha juntado: usar o prior como **peso** é escolha
+de modelagem e a medição a aprova; chamar o prior de **"confiabilidade medida em WDO" na
+tela** era mentira, e isso se conserta na apresentação. Hoje a tese escreve *"acerto medido
+em WDO: 42% em 38 operações"* ou *"confiabilidade estimada pelo ebook — ainda SEM medição
+em WDO"*, conforme `foi_medida()`.
+
+**R:R 2,5 — não adotado, apesar de melhorar os dois.** É o único ponto em que o WDO fica
+positivo. Mas a sequência 1,5 → 2,0 → 2,5 dá +0,001 → −0,030 → +0,034: **não é monotônica**.
+Se subir o R:R ajudasse de verdade, o 2,0 estaria entre os dois. Não está — a assinatura é
+de ruído, e adotar o melhor número da tabela é exatamente o erro que a regra acima proíbe.
 
 ---
 

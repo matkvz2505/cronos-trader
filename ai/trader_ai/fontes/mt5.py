@@ -173,10 +173,6 @@ class MetaTrader5Fonte:
         atrasado: ver `_simbolo_para_leitura`."""
         self._ligado = False
 
-        # Símbolos já selecionados nesta sessão. `symbol_select` é idempotente, mas
-        # chamá-lo a cada leitura custa uma ida ao terminal por timeframe por ciclo.
-        self._seguros: set[str] = set()
-
         # Contínuos que já se provaram atrasados, e por qual contrato foram trocados.
         # Medir uma vez por sessão basta: um símbolo que atrasa não volta ao normal no
         # meio do pregão, e refazer a comparação a cada ciclo dobraria as leituras.
@@ -227,7 +223,6 @@ class MetaTrader5Fonte:
             self._ligado = False
         # Os caches valem por sessão do terminal: reconectar pode cair noutro terminal,
         # com outros símbolos visíveis e outro estado de download de histórico.
-        self._seguros.clear()
         self._trocados.clear()
 
     def __enter__(self) -> MetaTrader5Fonte:
@@ -257,16 +252,22 @@ class MetaTrader5Fonte:
 
         Sem isto, `copy_rates_*` devolve `None` mesmo com o símbolo existindo — é o
         erro mais comum de quem começa com a API.
+
+        **Chamado a cada leitura, sem cache.** Havia um cache aqui — economizava uma ida
+        ao terminal por timeframe por ciclo — e ele custou dado ao vivo: o MT5 só
+        transmite tick de símbolo assinado no Observador de Mercado, e a assinatura não é
+        eterna. Com o cache, ela nunca era renovada e a série ia envelhecendo em silêncio.
+        Medido em 10/08/2026 às 12:54: `WIN$N` com 24,7 min de atraso enquanto o
+        `WDOU26` — que tinha gráfico aberto no terminal — vinha com 0,3 min.
+
+        A economia era de microssegundos; o custo era não perceber que os dados pararam.
         """
         mt5 = _mt5()
-        if simbolo in self._seguros:
-            return
         if not mt5.symbol_select(simbolo, True):
             raise FonteIndisponivel(
                 f"símbolo {simbolo} indisponível no terminal ({mt5.last_error()}). "
                 "Sua corretora dá acesso a esse contrato?"
             )
-        self._seguros.add(simbolo)
 
     # -- leitura ------------------------------------------------------------
 

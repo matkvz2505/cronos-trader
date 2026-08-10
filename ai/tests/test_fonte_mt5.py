@@ -249,8 +249,13 @@ def test_a_comparacao_de_atraso_roda_uma_vez_por_sessao(monkeypatch, sem_espera)
     assert terminal.chamadas["WIN$N"] == antes
 
 
-def test_desconectar_limpa_os_caches(monkeypatch, sem_espera):
-    """Reconectar pode cair noutro terminal, com outro estado de histórico."""
+def test_desconectar_limpa_o_cache_de_troca(monkeypatch, sem_espera):
+    """Reconectar pode cair noutro terminal, com outro estado de histórico.
+
+    `symbol_select` NÃO é cacheado: o MT5 só transmite tick de símbolo assinado, e a
+    assinatura não é eterna. Cachear a seleção fez a série de WIN envelhecer 24 min em
+    silêncio no pregão de 10/08.
+    """
     atrasado = _barras(80, EPOCH_15H20 - 60 * M5)
     em_dia = _barras(80, EPOCH_15H20)
     terminal = TerminalFalso({"WIN$N": [atrasado] * 9, "WINQ26": [em_dia] * 9})
@@ -261,7 +266,6 @@ def test_desconectar_limpa_os_caches(monkeypatch, sem_espera):
     fonte.desconectar()
 
     assert fonte._trocados == {}
-    assert fonte._seguros == set()
 
 
 def test_na_virada_de_contrato_a_serie_segue_no_continuo(monkeypatch, sem_espera):
